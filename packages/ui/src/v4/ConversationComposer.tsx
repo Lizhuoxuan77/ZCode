@@ -287,6 +287,8 @@ export interface ExternalTextInsertRequest {
   text: string;
   mention?: ComposerMentionPrefill;
   mode?: "replace" | "prepend-if-missing";
+  /** 应用文本后就地提交一次。给「从面板派任务」用：用户点的是派发，不该再按一次回车。 */
+  autoSend?: boolean;
 }
 
 export function restorePersistedComposerDraftIntoInput({
@@ -1311,6 +1313,10 @@ function ConversationComposerImpl({
     };
   }, [composerDraft, draftScopeId, workspaceIdentity, workspacePath]);
 
+  // 面板派任务的自动发送标记：apply 处置位；connectionPending 声明在下方，
+  // 兑现 effect 必须放在它之后（依赖数组在渲染期求值，放前面会 TDZ 崩掉整个 composer）。
+  const pendingAutoSendRef = useRef(false);
+
   // 外部预填和 scope 恢复可能在同一轮发生。若预填 effect 先执行，后续恢复会用旧草稿
   // 覆盖用户刚点的 Example Prompt；因此必须在 scope 恢复之后应用并确认单次插入请求。
   useEffect(() => {
@@ -1328,6 +1334,11 @@ function ConversationComposerImpl({
       appliedExternalTextInsertRequestRef.current = nextAppliedRequestId;
       if (applied) {
         onExternalTextInsertApplied?.(externalTextInsertRequest.requestId);
+        // 面板派任务：文本落进编辑器就等于用户点过发送。连接未就绪时先记下，
+        // 等 disabled→false 的 effect 兑现——和聚焦意图同一套延迟模式。
+        if (externalTextInsertRequest.autoSend === true) {
+          pendingAutoSendRef.current = true;
+        }
       }
       return applied;
     };
@@ -1355,6 +1366,7 @@ function ConversationComposerImpl({
   useEffect(() => {
     flushPendingFocus();
   }, [disabled, flushPendingFocus]);
+
 
   // 刷新/关窗前落盘当前草稿。
   useEffect(() => {
@@ -1449,6 +1461,18 @@ function ConversationComposerImpl({
     connectionPendingRef.current = pending;
     setConnectionPending(pending);
   }, []);
+
+  // 派任务的自动发送兑现：文本已应用、连接就绪才提交一次；重复触发由 pendingAutoSendRef 挡住。
+  // submit 自己的 connectionPending 检查会静默拦截，所以这里必须等它变 false 再调。
+  // 依赖 externalTextInsertRequest 是为了保证 apply 置位后的同一次提交周期里必然评估一次。
+  const flushPendingAutoSend = useCallback(() => {
+    if (!pendingAutoSendRef.current || disabled || connectionPending) return;
+    pendingAutoSendRef.current = false;
+    void latestSubmitRef.current?.();
+  }, [connectionPending, disabled]);
+  useEffect(() => {
+    flushPendingAutoSend();
+  }, [externalTextInsertRequest, flushPendingAutoSend]);
   const canReload = recoveryAllowed && reloadText && remoteAvailable;
   const canSend =
     !connectionPending &&

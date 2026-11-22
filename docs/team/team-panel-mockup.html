@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>团队面板 · 设计稿</title>
+<style>
+  :root {
+    --bg: #1b1b1d;
+    --panel: #202023;
+    --panel-2: #26262a;
+    --line: #333338;
+    --text: #ececf1;
+    --muted: #9a9aa3;
+    --dim: #6f6f78;
+    --accent: #6aa8ff;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --violet: #b083f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #111113;
+    color: var(--text);
+    font: 13px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 28px;
+  }
+  .frame {
+    width: 430px;
+    height: 900px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .titlebar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 12px;
+  }
+  .titlebar .tab {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border-radius: 6px; padding: 4px 10px; color: var(--text);
+  }
+
+  /* ---------- 头部 ---------- */
+  header { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .team-name { font-size: 15px; font-weight: 650; letter-spacing: .2px; }
+  .pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(63,185,80,.14); color: var(--green);
+    border: 1px solid rgba(63,185,80,.28);
+  }
+  .pill.amber { background: rgba(210,153,34,.14); color: var(--amber); border-color: rgba(210,153,34,.3); }
+  .meta { color: var(--dim); font-size: 11.5px; margin-left: auto; }
+  .goal { margin-top: 8px; color: var(--muted); font-size: 12.5px; }
+  .goal b { color: var(--text); font-weight: 600; }
+
+  /* ---------- 阶段 ---------- */
+  .phases { display: flex; gap: 4px; margin-top: 10px; }
+  .phase {
+    flex: 1; font-size: 11px; text-align: center; padding: 5px 0;
+    border-radius: 5px; background: var(--panel-2); color: var(--dim);
+    border: 1px solid transparent; position: relative;
+  }
+  .phase.done { color: var(--muted); }
+  .phase.done::after { content: "✓"; margin-left: 4px; color: var(--green); }
+  .phase.now { background: rgba(106,168,255,.14); color: var(--accent); border-color: rgba(106,168,255,.34); }
+
+  /* ---------- 区段 ---------- */
+  .section { padding: 12px 16px 4px; }
+  .section-title {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--dim); margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .count { color: var(--dim); font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+  /* ---------- 组织树 ---------- */
+  .tree { position: relative; }
+  .node { position: relative; padding: 5px 0 5px 0; }
+  .node-inner { display: flex; align-items: center; gap: 8px; }
+  .indent-1 { padding-left: 22px; }
+  .indent-2 { padding-left: 44px; }
+  .connector {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 22px;
+    border-left: 1px solid var(--line);
+  }
+  .indent-1 > .connector { left: 10px; }
+  .indent-2 > .connector { left: 32px; }
+  .connector::before {
+    content: ""; position: absolute; left: 0; top: 50%; width: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .avatar {
+    width: 24px; height: 24px; border-radius: 7px; flex: none;
+    display: grid; place-items: center; font-size: 11px; font-weight: 650;
+    background: #2f2f36; color: var(--text); border: 1px solid #3b3b44;
+  }
+  .avatar.sup { background: rgba(176,131,240,.16); border-color: rgba(176,131,240,.45); color: #d7bcff; }
+  .avatar.lead { background: rgba(106,168,255,.16); border-color: rgba(106,168,255,.45); color: #a9caff; }
+  .avatar.work { background: rgba(63,185,80,.12); border-color: rgba(63,185,80,.35); color: #9be2a6; }
+  .who { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .who .n { font-weight: 600; }
+  .chip {
+    font-size: 10.5px; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 999px; padding: 0 6px; flex: none;
+  }
+  .doing {
+    color: var(--muted); font-size: 11.5px; margin-left: 32px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .doing .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); flex: none; }
+  .doing.wait .dot { background: var(--amber); }
+  .doing.idle .dot { background: var(--dim); }
+  .dur { color: var(--dim); font-size: 11px; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 任务 ---------- */
+  .task {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 7px 8px; border-radius: 7px; margin-bottom: 2px;
+  }
+  .task:hover { background: var(--panel-2); }
+  .task .state { width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; flex: none; background: var(--amber); }
+  .task.done .state { background: rgba(63,185,80,.7); }
+  .task .body { min-width: 0; flex: 1; }
+  .task .t { font-size: 12.5px; color: var(--text); }
+  .task .s { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .task .more { color: var(--dim); font-size: 11px; flex: none; }
+  .task.done .t { color: var(--muted); }
+
+  /* ---------- 协作流 ---------- */
+  .msg { display: flex; gap: 8px; padding: 6px 8px; border-radius: 7px; }
+  .msg:hover { background: var(--panel-2); }
+  .msg .kind {
+    font-size: 10px; padding: 1px 5px; border-radius: 4px; flex: none; height: 17px; line-height: 15px;
+    background: #2c2c33; color: var(--muted);
+  }
+  .msg .kind.task { color: #a9caff; background: rgba(106,168,255,.12); }
+  .msg .kind.result { color: #9be2a6; background: rgba(63,185,80,.12); }
+  .msg .body { min-width: 0; flex: 1; }
+  .msg .head { font-size: 11.5px; color: var(--muted); display: flex; gap: 6px; }
+  .msg .head .arrow { color: var(--dim); }
+  .msg .head .time { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .msg .text { font-size: 12px; color: #d3d3da; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- 底部 ---------- */
+  footer { margin-top: auto; border-top: 1px solid var(--line); padding: 10px 12px; }
+  .composer {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; color: var(--dim); font-size: 12px;
+  }
+  .composer-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .hint { color: var(--dim); font-size: 11px; }
+  .btn {
+    background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
+    padding: 5px 12px; font-size: 12px; font-weight: 650;
+  }
+  .scroll { overflow-y: auto; flex: 1; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: #33333a; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="titlebar">
+    <div class="tab">👥 团队</div>
+    <div>＋</div>
+  </div>
+
+  <header>
+    <div class="row">
+      <span class="team-name">开发小组</span>
+      <span class="pill">实施中</span>
+      <span class="meta">7 人 · 12:31</span>
+    </div>
+    <div class="goal">目标：<b>一个记账 app</b></div>
+    <div class="phases">
+      <div class="phase done">规划</div>
+      <div class="phase done">设计</div>
+      <div class="phase now">实施</div>
+      <div class="phase">验收</div>
+    </div>
+  </header>
+
+  <div class="scroll">
+    <!-- 组织 -->
+    <section class="section">
+      <div class="section-title">组织 <span class="count">3 层 · 7 人</span></div>
+      <div class="tree">
+        <div class="node">
+          <div class="node-inner">
+            <div class="avatar sup">主</div>
+            <div class="who"><span class="n">主管</span><span class="chip">统筹</span></div>
+            <span class="dur">等组长</span>
+          </div>
+          <div class="doing wait"><span class="dot"></span>等待「组长」交付实施结果</div>
+        </div>
+
+        <div class="node indent-1"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar">产</div>
+            <div class="who"><span class="n">产品经理</span><span class="chip">规划</span></div>
+            <span class="dur">已完成</span>
+          </div>
+          <div class="doing idle"><span class="dot"></span>产出 plan.md · 6 分钟</div>
+        </div>
+
+        <div class="node indent-1"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar">设</div>
+            <div class="who"><span class="n">界面设计</span><span class="chip">设计</span></div>
+            <span class="dur">已完成</span>
+          </div>
+          <div class="doing idle"><span class="dot"></span>产出页面设计说明 · 8 分钟</div>
+        </div>
+
+        <div class="node indent-1"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar lead">组</div>
+            <div class="who"><span class="n">组长</span><span class="chip">实施</span></div>
+            <span class="dur">已运行 12 分</span>
+          </div>
+          <div class="doing"><span class="dot"></span>已派 3 个工作包，正在汇总</div>
+        </div>
+
+        <div class="node indent-2"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar work">前</div>
+            <div class="who"><span class="n">前端</span><span class="chip">页面</span></div>
+            <span class="dur">已运行 4 分</span>
+          </div>
+          <div class="doing"><span class="dot"></span>页面层 + 入口改造 · 5 个文件</div>
+        </div>
+
+        <div class="node indent-2"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar work">后</div>
+            <div class="who"><span class="n">后端</span><span class="chip">存储</span></div>
+            <span class="dur">排队中</span>
+          </div>
+          <div class="doing idle"><span class="dot"></span>数据模型 + 存储层 · 4 个文件</div>
+        </div>
+
+        <div class="node indent-2"><div class="connector"></div>
+          <div class="node-inner">
+            <div class="avatar work">测</div>
+            <div class="who"><span class="n">测试</span><span class="chip">验收</span></div>
+            <span class="dur">等前置</span>
+          </div>
+          <div class="doing wait"><span class="dot"></span>集成验收 · 等前后端交付</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 任务 -->
+    <section class="section">
+      <div class="section-title">任务 <span class="count">5 进行中 · 2 已完成</span></div>
+      <div class="task">
+        <span class="state"></span>
+        <div class="body">
+          <div class="t">页面层 + 入口改造</div>
+          <div class="s">前端 · 独占 5 个文件 · 已运行 4 分</div>
+        </div>
+        <span class="more">原文 ›</span>
+      </div>
+      <div class="task">
+        <span class="state"></span>
+        <div class="body">
+          <div class="t">数据模型 + 存储层</div>
+          <div class="s">后端 · 独占 4 个文件 · 排队中</div>
+        </div>
+        <span class="more">原文 ›</span>
+      </div>
+      <div class="task">
+        <span class="state"></span>
+        <div class="body">
+          <div class="t">集成验收</div>
+          <div class="s">测试 · 依赖前两个工作包 · 等前置</div>
+        </div>
+        <span class="more">原文 ›</span>
+      </div>
+      <div class="task done">
+        <span class="state"></span>
+        <div class="body">
+          <div class="t">规划方案</div>
+          <div class="s">产品经理 · 已完成 · 退回 0 次</div>
+        </div>
+        <span class="more">原文 ›</span>
+      </div>
+      <div class="task done">
+        <span class="state"></span>
+        <div class="body">
+          <div class="t">页面设计说明</div>
+          <div class="s">界面设计 · 已完成</div>
+        </div>
+        <span class="more">原文 ›</span>
+      </div>
+    </section>
+
+    <!-- 协作 -->
+    <section class="section">
+      <div class="section-title">协作 <span class="count">最近 6 条</span></div>
+      <div class="msg">
+        <span class="kind task">派活</span>
+        <div class="body">
+          <div class="head">组长 <span class="arrow">→</span> 前端 <span class="time">12:54</span></div>
+          <div class="text">工作包：页面层 + 入口改造（独占 5 个文件…）</div>
+        </div>
+      </div>
+      <div class="msg">
+        <span class="kind result">提交</span>
+        <div class="body">
+          <div class="head">界面设计 <span class="arrow">→</span> 主管 <span class="time">12:42</span></div>
+          <div class="text">页面设计说明已产出，2 页 + 1 存储模块，零第三方 UI 依赖</div>
+        </div>
+      </div>
+      <div class="msg">
+        <span class="kind task">派活</span>
+        <div class="body">
+          <div class="head">主管 <span class="arrow">→</span> 组长 <span class="time">12:42</span></div>
+          <div class="text">实施阶段：组织前端完成编码，规划与设计已定稿</div>
+        </div>
+      </div>
+      <div class="msg">
+        <span class="kind result">提交</span>
+        <div class="body">
+          <div class="head">产品经理 <span class="arrow">→</span> 主管 <span class="time">12:35</span></div>
+          <div class="text">规划方案：2 页 + 1 存储模块，验收标准 A1–A4</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="composer">要它交付什么？一句话说清结果即可</div>
+    <div class="composer-row">
+      <span class="hint">会在新任务里开始这次交付</span>
+      <button class="btn">派任务</button>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

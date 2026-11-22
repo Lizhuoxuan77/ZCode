@@ -32,7 +32,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Hand } from "lucide-react";
+import { Hand, UsersRound } from "lucide-react";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
@@ -5411,6 +5411,12 @@ export function SessionPane({
     sessionId !== null &&
     (snapshot === null || (state.status === "connecting" && !snapshot.runtimeInitialization));
   const errored = sessionId !== null && state.status === "error";
+  // 团队成员的会话在它第一次被叫醒时才落库；此前打开它必然报 Session not found。
+  // 这不是故障，是「还没有工作记录」的空态——尤其组建期主管刚招完人，个个都点不开。
+  const teamMemberSessionMissing =
+    errored &&
+    (sessionId?.startsWith("sess_team-") ?? false) &&
+    (state.lastError ?? "").includes("Session not found");
   // runtime 不在线（崩溃后重连中或重连失败）时，旧快照里的运行项已经没有执行者：胶囊计时停在
   // 断开前、停止入口隐藏；重连后的 CLI 投影给出真正的终态。
   const runtimeOffline = sessionId !== null && snapshot !== null && state.status !== "live";
@@ -6795,7 +6801,18 @@ export function SessionPane({
             </div>
           ) : null}
 
-          {errored && remoteAvailable ? (
+          {teamMemberSessionMissing ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <div className="flex size-11 items-center justify-center rounded-full bg-muted">
+                <UsersRound className="size-5 text-muted-foreground" aria-hidden />
+              </div>
+              <div className="text-ui-base font-semibold text-foreground">还没有工作记录</div>
+              <div className="max-w-md text-ui-sm leading-relaxed text-muted-foreground">
+                这个成员被招进来后还没接过第一个任务，所以这里还没有内容。
+                等它接到活跑起来，这里就是它的工作过程；右侧团队面板可以看到整个组织的进度。
+              </div>
+            </div>
+          ) : errored && remoteAvailable ? (
             <>
               <SessionSubscriptionErrorPanel
                 error={state.lastError ?? intl.formatMessage({ id: "chat.error.connectionLost" })}

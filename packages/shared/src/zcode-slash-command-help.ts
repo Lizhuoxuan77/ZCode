@@ -196,4 +196,15 @@ export const BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES: readonly BuiltinZCodeSlas
     summary: "Design and launch a dynamic workflow for a task.",
     usage: "/workflow [what the workflow should accomplish]",
   },
+  {
+    details: [
+      "Without arguments it staffs the team: the supervisor reads this project, splits it into modules, and hires one owner per module.",
+      "With a request it hands that request to the already-staffed team: plan, delegate by module, verify, deliver.",
+      "Needs a .zcode/team.json in the workspace; without it the command explains how to create one (or use the 团队 panel).",
+      "Teammates show up as separate sessions with their own memory; the supervisor blocks until it finishes that phase.",
+    ],
+    name: "team",
+    summary: "Staff a team for this project, or hand it a task.",
+    usage: "/team [what the team should deliver]",
+  },
 ] as const;

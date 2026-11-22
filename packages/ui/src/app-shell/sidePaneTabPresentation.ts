@@ -18,6 +18,7 @@ export interface SidePaneTabPresentationLabels {
   terminalTitle: string;
   subagentTypeLabel: string;
   subagentDirectoryTitle: string;
+  teamTitle: string;
   selectionChatTitle: string;
   planTitle: string;
   workflowRunTitle: string;
@@ -67,6 +68,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   }
   if (tab.type === "subagent-directory") {
     return `${tab.rootSessionId} ${tab.parentSessionId} subagent directory`;
+  }
+  if (tab.type === "team") {
+    return `${tab.workspaceKey} team`;
   }
   if (tab.type === "browser-permissions") return `${tab.origin} permissions settings`;
   if (tab.type === "browser") return tab.initialUrl ?? "";
@@ -145,6 +149,7 @@ export function getSidePaneTabTypeLabel(
     return tab.subagentType.trim() || labels.subagentTypeLabel;
   }
   if (tab.type === "subagent-directory") return labels.subagentDirectoryTitle;
+  if (tab.type === "team") return labels.teamTitle;
   if (tab.type === "browser" || tab.type === "browser-use") return labels.browserTitle;
   if (tab.type === "browser-permissions") return labels.browserPermissionsTitle;
   if (tab.type === "file-manager") return labels.fileManagerTitle ?? labels.codeViewerTitle;

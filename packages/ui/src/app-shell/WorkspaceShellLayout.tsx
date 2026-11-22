@@ -442,6 +442,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleOpenSubagentSession,
   handleOpenBackgroundBash,
   handleOpenSubagentDirectory,
+  handleOpenTeamTab,
   handleSyncSubagentSessionTabs,
   handleOpenSelectionSideChat,
   handleOpenPlanDetail,
@@ -2270,6 +2271,15 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       onCloseGit={handleCloseGit}
       onActivateTab={handleActivateSidePaneTab}
       onOpenNewTab={handleOpenNewSidePaneTab}
+      onOpenTeamTab={() =>
+        handleOpenTeamTab({
+          workspacePath: workspaceAbsPath,
+          ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        })
+      }
+      onOpenTeamMemberSession={({ sessionId, workspacePath, workspaceIdentity: identity }) =>
+        handleSelectTaskInChat(workspacePath, sessionId, identity)
+      }
       onReorderTab={handleReorderSidePaneTab}
       onCloseTab={handleCloseSidePaneTab}
       onCloseOtherTabs={handleCloseOtherSidePaneTabs}
@@ -2384,6 +2394,20 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       automationsActive={workspaceMainView === "automations"}
       onOpenPluginStore={handleOpenPluginStore}
       pluginStoreActive={workspaceMainView === "plugin-store"}
+      onOpenTeam={() =>
+        handleOpenTeamTab({
+          workspacePath: workspaceAbsPath,
+          ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        })
+      }
+      teamActive={
+        workspaceMainView === "chat" &&
+        (sidePaneState?.tabs ?? []).some(
+          (tab) =>
+            tab.type === "team" &&
+            tab.workspaceKey === (workspaceIdentity?.trim() || workspaceAbsPath),
+        )
+      }
       navPrimarySlot={navPrimarySlot}
       // 桌面没有 mobile 导航动作；内联包装曾让右侧开关穿透侧栏 memo，重复渲染全部项目。
       onWebRemoteTaskOpen={

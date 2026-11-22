@@ -131,6 +131,7 @@ import {
   loadZCodeAgentProfiles,
 } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
+import { createTeamPort } from "../team/team-port.js";
 import { withOfficialCommandEnv } from "../official-command-endpoint/index.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
 import {
@@ -988,6 +989,35 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       registry: options.providerRegistry,
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
+    // 团队 agent：workspace 里有 `.zcode/team.json` 才在真正用到时打开 SQLite。
+    // 端口恒注入，工具注册门读的是 `member(sessionId)` 与 `start` 的在场，
+    // 所以不用团队的项目不会多出一个数据库文件，也感觉不到任何行为变化。
+    const teamPort = createTeamPort({
+      workingDirectory,
+      logger,
+      traceContext,
+      getRuntimeDeps: () => ({
+        agentTelemetry: modelTelemetry.agentExecution,
+        appOptions: options,
+        appVersion,
+        artifactStore,
+        configResult,
+        fileSystemPort,
+        httpClientPort,
+        imageProcessorPort,
+        logger,
+        mcpPort,
+        modelFactory,
+        permissionService,
+        pluginSkillRoots: pluginOutcome.skillRoots,
+        runtime: getRuntime(),
+        runtimeConfig,
+        sessionId,
+        sessionStore,
+        storageRoot,
+        workingDirectory,
+      }),
+    });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
       ...(options.readSubagentRuntimeConfig
         ? {
@@ -1079,6 +1109,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       dynamicWorkflowRunPort,
       dynamicWorkflowSnippetPort,
       modelCatalogPort,
+      // 团队工具面的唯一入口：主会话只见 StartTeam，成员会话只见四个邮箱工具。
+      teamPort,
       sessionControl,
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
@@ -1467,6 +1499,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       ...sessionFacade,
       close: async () => {
         try {
+          // 团队成员的子会话先关：它们与本会话共用同一个 store，关晚了会对着已关闭的库写。
+          await teamPort.dispose().catch(() => undefined);
           // 先关闭 manager 准入并等后台根中断落盘，再让发起会话关闭其拥有的共享存储。
           try {
             await standaloneSessionControl?.close();

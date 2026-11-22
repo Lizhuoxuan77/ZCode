@@ -44,6 +44,7 @@ import type {
   SkillTelemetryMetadata,
   SubagentPort,
   SubagentRunOptions,
+  TeamPort,
   ToolArtifactStorePort,
   ToolCancellationPolicy,
   ToolContractDeclaration,
@@ -188,6 +189,11 @@ export interface ToolExecutionContext {
   workflowEscalatePort?: WorkflowEscalatePort;
   /** 工作流 actor 每个 ask 的 WebSearch 预算；仅在 workflow actor 会话注入，缺席即无上限。 */
   webSearchBudget?: WorkflowWebSearchBudgetPort;
+  /**
+   * 团队成员的邮箱与任务板端口；仅在团队成员的会话注入。
+   * 它只写状态，不叫醒别人——唤醒由调度器下一圈扫描完成（见 team 工具头注释）。
+   */
+  teamPort?: TeamPort;
   artifactStore?: ToolArtifactStorePort;
   /** 仅可信根会话装配；子代理不继承此控制权。 */
   sessionControl?: SessionControlBinding;

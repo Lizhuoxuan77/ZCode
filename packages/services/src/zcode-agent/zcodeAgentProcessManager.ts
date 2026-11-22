@@ -1,4 +1,7 @@
-import { spawnWindowsRuntimeHost } from "#src/windows-runtime-host/index.js";
+import {
+  spawnWindowsRuntimeHost,
+  type WindowsRuntimeHost,
+} from "#src/windows-runtime-host/index.js";
 import { localRuntimeNetworkCapture } from "#src/zcode-agent/localRuntimeNetworkCapture.js";
 import { resolveZCodeAgentSpawnCwd } from "#src/zcode-agent/zcodeAgentSpawnCwd.js";
 import type { ZCodeAgentStorageStartupSnapshot } from "#src/zcode-agent/zcodeAgent.js";
@@ -1270,16 +1273,28 @@ export class ZCodeAgentProcessManager {
       ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
       ...buildE2EAgentCoverageEnv(),
     };
-    const windowsRuntime =
-      process.platform === "win32"
-        ? await spawnWindowsRuntimeHost({
-            command: effectiveCommand.command,
-            args: spawnPreflight.args,
-            cwd: spawnPreflight.cwd,
-            env: childEnv,
-            signal: admissionSignal,
-          })
-        : undefined;
+    // 开发机没有原生 runtime host（需 CMake + VS 2022 编译）时的**显式**逃生舱。
+    // 不设这个变量时行为与改动前逐字相同：拿不到 host 就照旧抛错。
+    // 设了之后 agent 以直接 spawn 方式运行，失去 runtime host 提供的 Job Object 隔离——
+    // 只允许在本地开发/演示上使用，不能作为生产降级路径（那会静默削弱隔离）。
+    const allowUnsandboxedAgent = process.env.ZCODE_DEV_ALLOW_UNSANDBOXED_AGENT === "1";
+    let windowsRuntime: WindowsRuntimeHost | undefined;
+    if (process.platform === "win32") {
+      try {
+        windowsRuntime = await spawnWindowsRuntimeHost({
+          command: effectiveCommand.command,
+          args: spawnPreflight.args,
+          cwd: spawnPreflight.cwd,
+          env: childEnv,
+          signal: admissionSignal,
+        });
+      } catch (error) {
+        if (!allowUnsandboxedAgent) throw error;
+        log("Windows runtime host unavailable; spawning agent directly", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const child =
       windowsRuntime?.child ??
       spawn(effectiveCommand.command, spawnPreflight.args, {

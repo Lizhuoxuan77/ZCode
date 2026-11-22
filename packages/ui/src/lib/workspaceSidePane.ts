@@ -200,8 +200,21 @@ export interface SubagentSessionSidePaneTab {
   title: string;
 }
 
-export interface SubagentDirectorySidePaneTab {
+/**
+ * 团队面板。以 workspace 为键：一个 workspace 目前只有一个常驻团队，
+ * 所以同一 workspace 里的多个会话共享同一个 tab（id 里不带 sessionId）。
+ */
+export interface TeamSidePaneTab {
   id: string;
+  type: "team";
+  openedAt?: number;
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+}
+
+export interface SubagentDirectorySidePaneTab {  id: string;
   type: "subagent-directory";
   ownerTaskId?: string | null;
   openedAt?: number;
@@ -585,6 +598,7 @@ export type WorkspaceSidePaneTab =
   | BrowserUseSidePaneTab
   | SubagentSessionSidePaneTab
   | SubagentDirectorySidePaneTab
+  | TeamSidePaneTab
   | SelectionSideChatPaneTab
   | PlanDetailSidePaneTab
   | PluginUiSidePaneTab
@@ -797,8 +811,24 @@ export function createSubagentSessionSidePaneTab(options: {
   };
 }
 
-export function createSubagentDirectorySidePaneTab(options: {
+export function createTeamSidePaneTab(options: {
   workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+}): TeamSidePaneTab {
+  return {
+    id: ["team", encodeSidePaneTabIdPart(options.workspaceKey)].join(":"),
+    type: "team",
+    openedAt: Date.now(),
+    workspaceKey: options.workspaceKey,
+    workspacePath: options.workspacePath,
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+  };
+}
+
+export function createSubagentDirectorySidePaneTab(options: {  workspaceKey: string;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
@@ -1192,6 +1222,8 @@ export function isSidePaneTabVisibleInScope(
     case "extension-logs":
     case "plugin-market":
     case "treemapping":
+    // 团队面板是工作区级：一个 workspace 一个常驻团队，切换会话不该把它关掉。
+    case "team":
       return true;
     case "browser-use":
       return tab.sessionId === scope.ownerTaskId;
@@ -2000,6 +2032,22 @@ export function openSubagentSessionSidePane(
         }
       : nextTab,
   );
+}
+
+export function openTeamSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: {
+    workspaceKey: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  },
+): WorkspaceSidePaneState {
+  const nextTab = createTeamSidePaneTab(options);
+  const existing = current?.tabs.find(
+    (tab): tab is TeamSidePaneTab => tab.type === "team" && tab.id === nextTab.id,
+  );
+  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
 }
 
 export function openSubagentDirectorySidePane(

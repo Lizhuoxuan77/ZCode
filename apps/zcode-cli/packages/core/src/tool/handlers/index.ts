@@ -63,6 +63,12 @@ import { askUserQuestionToolEntry } from "./ask-user-question.js";
 import { sendMessageToolEntry } from "./send-message.js";
 import { respondToCoordinatorToolEntry } from "./respond-to-coordinator.js";
 import { createSubmitResultToolEntry, submitResultToolEntry } from "./submit-result.js";
+import {
+  teamStartToolEntry,
+  teamToolEntries,
+  TEAM_MEMBER_TOOL_NAMES,
+  TEAM_START_TOOL_NAME,
+} from "./team.js";
 import { escalateToolEntry } from "./escalate.js";
 import { resolveWorkflowQuestionToolEntry } from "./resolve-workflow-question.js";
 import { fillWorkflowHoleToolEntry } from "./fill-workflow-hole.js";
@@ -114,6 +120,9 @@ export const builtInTools: ToolEntry[] = [
   sendMessageToolEntry,
   respondToCoordinatorToolEntry,
   submitResultToolEntry,
+  // 团队 agent 的工具面。成员工具只在团队成员会话注册；发起工具只在发起会话注册。
+  ...teamToolEntries,
+  teamStartToolEntry,
   // actor 的升级通道。与 submit_result 完全同构：
   // 端口在场即注册（includeEscalate），`tools:"none"` 下由 workflow_child 的 allowlist
   // 补回逻辑救回来。不入 actor 的默认 disallow——最可能撞上未预见之墙的 actor 恰是
@@ -204,6 +213,10 @@ interface RegisterBuiltInToolsOptions {
   submitResultSchema?: JsonSchema;
   /** actor 的升级通道；门与 includeSubmitResult 同款（注入了 WorkflowEscalatePort 才注册）。 */
   includeEscalate?: boolean;
+  /** 注入了 teamPort（团队成员会话）才注册四个团队工具。 */
+  includeTeam?: boolean;
+  /** 注入了 teamPort.start（发起会话）才注册 StartTeam。 */
+  includeTeamStart?: boolean;
   includeWorkflow?: boolean;
   /** 只由可信启动绑定指定：选择同名会话工具的变体；未指定时这些工具都不注册。 */
   sessionControlKind?: "cli" | "app";
@@ -285,6 +298,12 @@ export function registerBuiltInTools(
       continue;
     }
     if (entry.metadata.name === "escalate" && options.includeEscalate !== true) {
+      continue;
+    }
+    if (TEAM_MEMBER_TOOL_NAMES.has(entry.metadata.name) && options.includeTeam !== true) {
+      continue;
+    }
+    if (entry.metadata.name === TEAM_START_TOOL_NAME && options.includeTeamStart !== true) {
       continue;
     }
     if (

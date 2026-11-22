@@ -148,6 +148,20 @@ export {
   type ZCodeAgentLocalRuntimeChildProcesses,
   ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE,
 } from "./zcode-agent/zcodeAgent.js";
+// 只导出类型：这个 barrel 会进入渲染层的模块图（IZCodeAgentService 在这里既有类型也有值）。
+// 把 readTeamSnapshot 这种运行时函数导出出去，会把 node:sqlite 拖进浏览器图表，
+// 启动即白屏。需要函数的地方直接从 ./zcode-agent/teamSnapshot.js 引。
+export type {
+  ZCodeTeamConfigWriteParams,
+  ZCodeTeamConfigWriteResult,
+} from "./zcode-agent/teamConfigWrite.js";
+export type {
+  ZCodeTeamSnapshot,
+  ZCodeTeamSnapshotParams,
+  ZCodeTeamMemberView,
+  ZCodeTeamTaskView,
+  ZCodeTeamMessageView,
+} from "./zcode-agent/teamSnapshot.js";
 export {
   isZCodeAgentModelSelectionBasisUnsupportedError,
   ZCodeAgentModelSelectionBasisUnsupportedError,

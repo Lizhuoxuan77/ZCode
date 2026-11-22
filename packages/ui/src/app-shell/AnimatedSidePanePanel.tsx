@@ -57,6 +57,7 @@ import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs.js";
 import { SidePaneTabOverview } from "@/app-shell/SidePaneTabOverview.js";
 import { SubagentSessionSidePane } from "@/app-shell/SubagentSessionSidePane.js";
 import { SubagentDirectorySidePane } from "@/app-shell/SubagentDirectorySidePane.js";
+import { TeamSidePane } from "@/app-shell/TeamSidePane.js";
 import { SelectionSideChatPane } from "@/app-shell/SelectionSideChatPane.js";
 import { BackgroundBashOutputSidePane } from "@/app-shell/BackgroundBashOutputSidePane.js";
 import { PlanDetailSidePane } from "@/app-shell/PlanDetailSidePane.js";
@@ -126,6 +127,7 @@ import {
   MessageSquareTextIcon,
   PlusIcon,
   SquareTerminalIcon,
+  UsersIcon,
   type LucideIcon,
 } from "lucide-react";
 
@@ -337,6 +339,8 @@ export function AnimatedSidePanePanel({
   onCloseGit,
   onActivateTab,
   onOpenNewTab,
+  onOpenTeamTab,
+  onOpenTeamMemberSession,
   onReorderTab,
   onCloseTab,
   onCloseOtherTabs,
@@ -428,6 +432,14 @@ export function AnimatedSidePanePanel({
   onCloseGit: () => void;
   onActivateTab: (tabId: string) => void;
   onOpenNewTab: () => void;
+  /** 打开团队面板（按 workspace 复用）。 */
+  onOpenTeamTab: () => void;
+  /** 点团队里的成员 → 打开它自己的工作会话。 */
+  onOpenTeamMemberSession?: (request: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    sessionId: string;
+  }) => void;
   /** "插件"分组打开面板 tab；缺省不渲染分组（web / 无宿主）。 */
   onReorderTab: (activeTabId: string, overTabId: string) => void;
   onCloseTab: (tabId: string) => void;
@@ -749,6 +761,13 @@ export function AnimatedSidePanePanel({
     </Button>
   );
   const openTabLauncherItemById: Record<OpenTabLauncherItemId, OpenTabLauncherItem> = {
+    team: {
+      id: "team",
+      label: "团队",
+      description: "查看团队组织、任务与消息流",
+      icon: UsersIcon,
+      onOpen: onOpenTeamTab,
+    },
     sites: {
       id: "sites",
       label: intl.formatMessage({ id: "sidePane.sites" }),
@@ -936,6 +955,7 @@ export function AnimatedSidePanePanel({
         }),
         terminalTitle: intl.formatMessage({ id: "terminal.title" }),
         subagentTypeLabel: intl.formatMessage({ id: "sidePane.subagent" }),
+        teamTitle: "团队",
         subagentDirectoryTitle: intl.formatMessage({
           id: "sidePane.subagentDirectory",
         }),
@@ -1379,6 +1399,29 @@ export function AnimatedSidePanePanel({
                             workspacePath={workspaceAbsPath}
                             workspaceIdentity={workspaceIdentity}
                             onClose={() => onCloseTab(tab.id)}
+                          />
+                        ) : tab.type === "team" ? (
+                          <TeamSidePane
+                            tab={tab}
+                            {...(onOpenTeamMemberSession
+                              ? {
+                                  onOpenSession: (sessionId: string) =>
+                                    onOpenTeamMemberSession({
+                                      workspacePath: tab.workspacePath,
+                                      ...(tab.workspaceIdentity
+                                        ? { workspaceIdentity: tab.workspaceIdentity }
+                                        : {}),
+                                      sessionId,
+                                    }),
+                                }
+                              : {})}
+                            {...(onCreateTask
+                              ? {
+                                  onCreateTask: (
+                                    request: { initialPrompt: string; autoSend?: boolean },
+                                  ) => onCreateTask(request),
+                                }
+                              : {})}
                           />
                         ) : tab.type === "new-tab" ? (
                           openTabLauncher

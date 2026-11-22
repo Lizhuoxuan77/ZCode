@@ -162,6 +162,9 @@ export interface ProjectSidebarProps {
   onOpenRepoWiki?: () => void;
   repoWikiActive?: boolean;
   onOpenAutomations?: () => void;
+  /** 打开「团队」面板（团队架构、成员状态与任务）。没有团队时面板自己给出创建入口。 */
+  onOpenTeam?: () => void;
+  teamActive?: boolean;
   onOpenPluginStore?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;

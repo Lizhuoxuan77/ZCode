@@ -4,6 +4,7 @@ export const MIN_PREVIEW_PANE_HEAVY_CONTENT_VISIBLE_INLINE_SIZE_PX = 96;
 export const SITES_PLUGIN_ID = "zcode-site@zcode-plugins-official";
 
 export type OpenTabLauncherItemId =
+  | "team"
   | "sites"
   | "selection-side-conversation"
   | "files"
@@ -25,7 +26,7 @@ export function resolveOpenTabLauncherItemIds({
   canOpenSites?: boolean;
   supportsEmbeddedBrowser?: boolean;
 }): OpenTabLauncherItemId[] {
-  const itemIds: OpenTabLauncherItemId[] = ["files"];
+  const itemIds: OpenTabLauncherItemId[] = ["team", "files"];
 
   if (supportsEmbeddedBrowser) {
     itemIds.push("browser");

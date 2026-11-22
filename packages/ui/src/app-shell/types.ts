@@ -79,6 +79,8 @@ export interface CreateTaskOptions {
   createSource?: SessionCreateSource;
   /** 新草稿输入框预填文本；只写草稿，不自动发送。 */
   initialPrompt?: string;
+  /** 与 initialPrompt 搭配：文本应用后就地提交一次。给「从面板派任务」用。 */
+  autoSend?: boolean;
   /** 创建项目后的当前草稿交接，仅在 renderer 内存中传递。 */
   initialComposerDraft?: ComposerDraftHandoff;
   /**
@@ -362,6 +364,11 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenSubagentDirectory: (
     request: import("@/lib/workspaceSidePane.js").OpenScopedSubagentDirectorySideTabRequest,
   ) => void;
+  handleOpenTeamTab: (request: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  }) => void;
   handleSyncSubagentSessionTabs: (
     request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest,
   ) => void;

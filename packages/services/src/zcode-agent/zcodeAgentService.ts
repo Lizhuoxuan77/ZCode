@@ -221,6 +221,8 @@ import {
   mergeOffPeakMutationToolDenylist,
 } from "#src/zcode-agent/automationToolPolicy.js";
 import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./zcodeAgent.js";
+import { readTeamSnapshot, type ZCodeTeamSnapshotParams } from "./teamSnapshot.js";
+import { writeTeamConfig, type ZCodeTeamConfigWriteParams } from "./teamConfigWrite.js";
 import { createContextCompositionClient } from "#src/zcode-agent/contextCompositionClient.js";
 import {
   createPluginHostQueriesClient,
@@ -4908,6 +4910,15 @@ export function createZCodeAgentService(
         },
         zcodeSessionSubagentsResultSchema,
       );
+    },
+
+    async getTeamSnapshot(params: ZCodeTeamSnapshotParams) {
+      // 纯读：不连 agent、不占运行时锁。团队没建/库在迁移时返回空快照，界面自己显示空态。
+      return readTeamSnapshot(params);
+    },
+
+    async writeTeamConfig(params: ZCodeTeamConfigWriteParams) {
+      return writeTeamConfig(params);
     },
 
     async getAppUsageStats(params: ZCodeAgentAppUsageParams) {

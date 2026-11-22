@@ -29,6 +29,7 @@ import {
   type SessionStorePort,
   type SkillPort,
   type SkillRoot,
+  type TeamPort,
   type ToolArtifactStorePort,
   type TraceContext,
   type WorkflowAgentCallInput,
@@ -67,6 +68,11 @@ export interface ScriptWorkflowAgentRuntimeDeps {
   sessionStore: SessionStorePort;
   storageRoot: string;
   workingDirectory: string;
+  /**
+   * 团队成员会话的邮箱与任务板端口。只由团队运行时注入：
+   * 它让这个子会话看见 CreateTeammate / MessageTeammate / SubmitTask / DeliverResult。
+   */
+  teamPort?: TeamPort;
 }
 
 export function createScriptWorkflowAgentRuntime(input: {
@@ -191,6 +197,7 @@ export function createScriptWorkflowAgentRuntime(input: {
         : {}),
       ...(input.workflowEscalatePort ? { workflowEscalatePort: input.workflowEscalatePort } : {}),
       ...(input.webSearchBudget ? { webSearchBudget: input.webSearchBudget } : {}),
+      ...(input.deps.teamPort ? { teamPort: input.deps.teamPort } : {}),
       ...(input.modelRequestAdmission
         ? { modelRequestAdmission: input.modelRequestAdmission }
         : {}),

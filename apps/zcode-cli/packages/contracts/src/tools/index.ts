@@ -58,6 +58,8 @@ export * from "./fill-workflow-hole.js";
 export * from "./workflow-observation-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";
+// 团队 agent 的四个工具面。名字常量同时被 core 的注册门与权限服务读走。
+export * from "./team.js";
 
 // Shared types (only once to avoid duplicates)
 export type { DiffHunk, GitDiff } from "./write.js";

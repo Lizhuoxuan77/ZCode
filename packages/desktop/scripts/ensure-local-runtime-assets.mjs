@@ -37,6 +37,12 @@ const shouldRequireWindowsBrowserImportHelper =
 // ENOENT 后 fail-open：浮窗照常显示、只是不再跟随系统设置窗口，且全程无报错，问题只能靠翻日志发现。
 // 缺 Xcode CLT 时 build 脚本自身 warn 后 exit 0，这里仍保持 not ready，至多每次 dev 多跑一次秒级脚本。
 const shouldRequireMacosWindowBounds = target.os === "darwin";
+// runtime-host 需要 CMake + VS 2022 本地编译。没有工具链的开发机可以选择显式降级
+// （agent 直接 spawn，失去 Job Object 隔离），此时自检不应再把这个产物当必需项——
+// 否则 `pnpm dev:desktop` 在第一步就断，降级开关永远走不到。两边共用同一个变量，
+// 保证「说好的降级」和「实际能不能起」是同一个判据。
+const allowUnsandboxedAgent = process.env.ZCODE_DEV_ALLOW_UNSANDBOXED_AGENT === "1";
+const shouldRequireWindowsRuntimeHost = target.os === "win32" && !allowUnsandboxedAgent;
 
 function isNativeSearchReady() {
   if (!nativeSearchBuildPlan) return true;
@@ -71,7 +77,7 @@ function isNativeSearchReady() {
 }
 
 const REQUIRED_LOCAL_RUNTIME_ASSETS = [
-  ...(target.os === "win32"
+  ...(shouldRequireWindowsRuntimeHost
     ? [
         {
           label: "Windows runtime host",

@@ -116,6 +116,7 @@ export type { BrowserClientTransport } from "./browser-client/index.js";
 
 // Subagent components
 export * from "./subagent/index.js";
+export * from "./team/index.js";
 
 // Runtime task components
 export * from "./runtime-task/index.js";

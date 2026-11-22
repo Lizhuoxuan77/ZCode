@@ -69,6 +69,15 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
       : { submitResultSchema: deps.workflowSubmitSchema }),
     // escalate 与 submit_result 同门同理由：端口在场即注册（不做 opt-in：最可能撞墙的 actor 恰是作者没标记的那个）。
     includeEscalate: Boolean(deps.workflowEscalatePort),
+    // 团队工具：成员工具只给团队成员；发起工具只给发起会话，且不下发给子代理
+    // （否则每个子代理都能另起一个团队，预算与组织关系一起失控）。
+    includeTeam: deps.teamPort?.member(runtime.sessionId) !== undefined,
+    // StartTeam 恒注册（非成员会话）：是否真的能用由调用时的配置决定。
+    // 否则面板里刚建好的团队要先重启会话才认，创建动作看起来像没生效。
+    includeTeamStart:
+      deps.teamPort !== undefined &&
+      deps.teamPort.member(runtime.sessionId) === undefined &&
+      runtime.config.taskType !== "subagent_child",
     includeWorkflow: Boolean(deps.workflowPort),
     sessionControlKind: runtime.sessionControlKind,
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
@@ -195,6 +204,7 @@ function createRuntimeToolExecutor(
     skillPort: deps.skillPort,
     subagentPort: runtime.subagentPort,
     coordinatorResponsePort: deps.coordinatorResponsePort,
+    teamPort: deps.teamPort,
     workflowSubmitPort: deps.workflowSubmitPort,
     workflowEscalatePort: deps.workflowEscalatePort,
     webSearchBudget: deps.webSearchBudget,

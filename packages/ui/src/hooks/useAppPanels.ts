@@ -43,6 +43,7 @@ import {
   openTerminalSidePane,
   openSubagentSessionSidePane,
   openSubagentDirectorySidePane,
+  openTeamSidePane,
   openSelectionSideChatPane,
   openPlanDetailSidePane,
   openWorkflowRunSidePane,
@@ -1376,6 +1377,22 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState, revealSidePaneForCurrentOwner],
   );
 
+  const handleOpenTeamTab = useCallback(
+    (request: { workspacePath: string; workspaceIdentity?: string; remoteSessionId?: string }) => {
+      const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) =>
+        openTeamSidePane(current, {
+          workspaceKey,
+          workspacePath: request.workspacePath,
+          ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+          ...(request.remoteSessionId ? { remoteSessionId: request.remoteSessionId } : {}),
+        }),
+      );
+    },
+    [commitOpenedSidePaneState, revealSidePaneForCurrentOwner],
+  );
+
   const handleSyncSubagentSessionTabs = useCallback(
     (request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest) => {
       // 分支 edit/retry 的失效 tab 属于投影清理，不进入“最近关闭”。
@@ -2143,6 +2160,7 @@ export function useAppPanels(options: {
     handleOpenSubagentSession,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
+    handleOpenTeamTab,
     handleSyncSubagentSessionTabs,
     handleOpenSelectionSideChat,
     handleOpenPlanDetail,

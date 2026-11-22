@@ -16,6 +16,14 @@ import type {
   ZCodeAgentPluginMentionItemsResult,
 } from "#src/zcode-agent/pluginHostQueriesClient.js";
 import type {
+  ZCodeTeamSnapshot,
+  ZCodeTeamSnapshotParams,
+} from "#src/zcode-agent/teamSnapshot.js";
+import type {
+  ZCodeTeamConfigWriteParams,
+  ZCodeTeamConfigWriteResult,
+} from "#src/zcode-agent/teamConfigWrite.js";
+import type {
   BackgroundBashOutputResult,
   SessionDebugSnapshot,
   ZCodeSessionContentProfile,
@@ -725,6 +733,16 @@ export interface IZCodeAgentService {
   listSessionSubagents(
     params: ZCodeAgentListSessionSubagentsParams,
   ): Promise<ZCodeSessionSubagentsResult>;
+  /**
+   * 团队面板的只读投影。直接读该 workspace 的 `.zcode/team/team.db`，
+   * 不经过 agent 进程：agent 正在跑的时候界面也要能看，读走 WAL 并发路径。
+   */
+  getTeamSnapshot(params: ZCodeTeamSnapshotParams): Promise<ZCodeTeamSnapshot>;
+  /**
+   * 面板里「创建团队」：按名字生成 `.zcode/team.json`。已存在时不覆盖，
+   * 由调用方根据 created 决定提示语。写入后配置读取会自动生效，无需重启会话。
+   */
+  writeTeamConfig(params: ZCodeTeamConfigWriteParams): Promise<ZCodeTeamConfigWriteResult>;
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
   previewSessionDeletion?(params: V4SessionDeletionParams): Promise<V4SessionDeletionPreview>;
   executeSessionDeletion?(params: V4SessionDeletionExecuteParams): Promise<V4SessionDeletionResult>;

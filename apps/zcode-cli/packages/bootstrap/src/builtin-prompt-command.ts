@@ -3,6 +3,11 @@ import {
   BUILTIN_WORKFLOW_COMMAND_NAME,
   expandBuiltinWorkflowCommandPrompt,
 } from "./builtin-workflow-command.js";
+import {
+  BUILTIN_TEAM_COMMAND_NAME,
+  expandBuiltinTeamCommandPrompt,
+  isTeamConfigured,
+} from "./builtin-team-command.js";
 
 const BUILTIN_PROMPT_COMMAND_PATTERN = /^\/([^\s]+)(?:\s+([\s\S]*))?$/;
 const INIT_COMMAND_NAME = "init";
@@ -59,6 +64,16 @@ export function resolveZCodeBuiltinPromptCommandInvocation(
     return {
       name: BUILTIN_WORKFLOW_COMMAND_NAME,
       prompt: expandBuiltinWorkflowCommandPrompt(invocation.args),
+    };
+  }
+
+  if (invocation.name === BUILTIN_TEAM_COMMAND_NAME) {
+    // 没有配置时不吞掉命令：返回一段「怎么开」的正文，比让模型对着不存在的工具瞎试好。
+    return {
+      name: BUILTIN_TEAM_COMMAND_NAME,
+      prompt: expandBuiltinTeamCommandPrompt(invocation.args, {
+        enabled: isTeamConfigured(options.workingDirectory ?? process.cwd()),
+      }),
     };
   }
 

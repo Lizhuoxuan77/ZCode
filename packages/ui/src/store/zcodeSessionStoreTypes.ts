@@ -261,6 +261,8 @@ export interface ZCodeSessionStoreState {
     workspaceIdentity?: string,
     mention?: ComposerMentionPrefill,
     mode?: "replace" | "prepend-if-missing",
+    /** 文本应用后就地提交一次（面板派任务）。 */
+    autoSend?: boolean,
   ) => number;
   clearComposerTextInsertRequest: (
     workspacePath: string,

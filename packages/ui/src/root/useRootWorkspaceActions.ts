@@ -243,7 +243,14 @@ export function useRootWorkspaceActions({
         );
         useZCodeSessionStore
           .getState()
-          .requestComposerTextInsert(workspacePath, initialPrompt, workspaceIdentity, mention);
+          .requestComposerTextInsert(
+            workspacePath,
+            initialPrompt,
+            workspaceIdentity,
+            mention,
+            undefined,
+            options.autoSend,
+          );
       }
     },
     [workbenchGroupClientMode, composerClientNamespace],

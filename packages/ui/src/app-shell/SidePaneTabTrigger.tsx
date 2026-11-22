@@ -17,6 +17,7 @@ import {
   MapIcon,
   MessageSquareTextIcon,
   ListTreeIcon,
+  UsersIcon,
   PlugIcon,
   NotepadTextIcon,
   PackageIcon,
@@ -324,6 +325,10 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <ListTreeIcon className="size-3.5" />;
   }
 
+  if (tab.type === "team") {
+    return <UsersIcon className="size-3.5" />;
+  }
+
   if (tab.type === "browser") {
     return <BrowserTabFavicon faviconUrl={tab.faviconUrl} />;
   }
@@ -538,6 +543,10 @@ export function getSidePaneTabTitle(
 
   if (tab.type === "subagent-directory") {
     return formatMessage({ id: "sidePane.subagentDirectory" });
+  }
+
+  if (tab.type === "team") {
+    return "团队";
   }
 
   if (tab.type === "browser") {

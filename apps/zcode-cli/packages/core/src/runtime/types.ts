@@ -92,6 +92,7 @@ import type {
   McpPort,
   McpServerConfig,
   SubagentPort,
+  TeamPort,
   ToolArtifactStorePort,
   ToolCallId,
   WorkflowPort,
@@ -391,6 +392,11 @@ export interface AgentRuntimeDeps {
   mcpPort?: McpPort;
   subagentPort?: SubagentPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
+  /**
+   * 团队成员的邮箱与任务板端口。端口在场即注册四个团队工具；
+   * 它只写状态、不唤醒任何人——唤醒是调度器的职责。
+   */
+  teamPort?: TeamPort;
   /** 工作流 actor 提交终态结果的端口；存在即作为 submit_result 工具的注册门。 */
   workflowSubmitPort?: WorkflowSubmitPort;
   /**
