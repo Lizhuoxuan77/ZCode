@@ -82,10 +82,6 @@ export function canAssign(from: TeamRole, to: TeamRole): PolicyResult {
   return { ok: false, reason: `${from} 不能给 ${to} 派活；可以提问，但不能指派任务` };
 }
 
-export function canAskUser(role: TeamRole): PolicyResult {
-  return role === "supervisor" ? ALLOW : { ok: false, reason: '只有主管能直接问用户；向上级上报' };
-}
-
 export function canDeliver(role: TeamRole): PolicyResult {
   return role === "supervisor" ? ALLOW : { ok: false, reason: "只有主管能向用户交付" };
 }

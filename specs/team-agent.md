@@ -13,11 +13,11 @@
 - 团队属于 **workspace**，不属于 session。同一 workspace 的多个窗口共享同一批 agent；切换 workspace 即切换团队。
 - **agent 是身份，任务才是会结束的东西。** agent 状态只有 `idle / running / waiting / archived`，没有 `done`。交付完活的成员仍然可以被同事提问。
 - 交付链路固定为：用户 → 主管 → PM → UI → 组长 → 成员，成员之间并行；任何成员都可以跨层向任何人发消息提问，但**升级路径唯一**。
-- **只有主管持有 `ask_user`**。其他角色卡住时只能 `escalate` 给自己的上级，由主管决定是否值得打扰用户。
+- **团队交付期间不向用户提问。** v0.6 起 `ask_user` 不暴露给任何团队成员；主管拿不准时做合理假设，并在最终交付里显式标注哪些决定是替用户做的。其他角色卡住时只能发消息给上级，由上级决定是否调整范围或换做法。
 - 下游对上游产出有**一次退回权**。任务被打回后 `revision` 记 1，再次退回必须升级给主管，不允许无限互退。
-- 用户不在时，主管**超时后自主决策**，并在最终交付里显式标注哪些决定是替用户做的。自主决策不阻塞其他分支。
+- 自主决策不阻塞其他分支；最终交付必须逐条列出替用户做的决定和未验证的部分。
 - UI 环节的产出是**可运行的 HTML 原型**，不是图片。这样测试环节能做确定性验收，而不是依赖模型自评。
-- 用户只有五个交互面：配置团队、提需求、看进展、回答提问、打断插话。不新增第六个。
+- 用户只有四个交互面：配置团队、提需求、看进展、打断插话。v0.6 不提供团队中途提问；不新增第五个。
 
 ## Ownership and boundaries
 
@@ -45,9 +45,8 @@ sequenceDiagram
     Note over L: 状态转 waiting，上下文落盘
     S->>P: 唤醒
     P->>S: send_message(UI, task, refs=[规格])
-    P-->>L: escalate 若规格存在歧义
-    L->>U: ask_user（唯一出口）
-    U-->>L: 回答，按 qid 配对
+    P-->>L: 发消息说明规格歧义
+    Note over L: 拿不准就做假设，写进最终交付（v0.6 不中途问用户）
     S->>L: 再次唤醒，继续推进
     L->>M: 派活
     M->>S: send_message(同侪, question)
@@ -63,7 +62,7 @@ sequenceDiagram
 | 配置团队 | 新建：workspace 团队文件 + `/team` 命令 | 无现成对应。subagent markdown 是单 agent 定义，不含层级与预算 |
 | 提需求 | 现有 Composer | 消息进主管邮箱，不进主 agent；会话标题改为需求摘要 |
 | 看进展 | 现有 `WorkflowRunSidePane` / `WorkflowTimeline` / `workflow-graph` | 图的分组从 phase 改为**汇报关系**；成员卡点开是该成员的 transcript |
-| 被提问 | 现有 `pendingQuestions` + `qid` | 复用，不改。需补 `actorName` 显示为角色名而非站点 id |
+| 被提问（v0.6 不启用） | 现有 `pendingQuestions` + `qid` | 团队交付期间不向用户提问；主管做假设并在最终交付里列出 |
 | 打断插话 | 现有 `CommandInbox` 串行 admission + Cancel / Resume | 复用。插话进主管邮箱，不打断正在跑的成员 |
 
 团队视图挂 workspace，**不新增一级入口**。侧栏仍是任务列表，点进任务看这次交付，点 workspace 看组织。
@@ -84,14 +83,14 @@ sequenceDiagram
 | 已配置、未选 | 按钮显示团队名与人数，默认仍是单人模式 | 点开选择团队，或直接发送走单人 |
 | 已选、未发送 | Composer 下方出现一行提示：本任务将由某团队承接 | 取消选择，回到单人 |
 | 运行中 | 右侧栏出现组织视图，成员状态实时变化 | 点成员看它的 transcript；可插话，不打断 |
-| 待回答 | 对话流末尾出现提问卡，带上下文与候选答案；右侧栏对应成员标记为等待 | 回答、忽略（超时后主管自主决策） |
+| 待回答（v0.6 不启用） | 不出现提问卡；主管把假设写进最终交付 | 无需回答，直接看交付里的决策清单 |
 | 已完成 | 交付卡片 + 「我替你做的决定」一节 | 查看改动、重新发起、复制结论 |
 
 ### 反馈约定
 
 - 组织视图里每个成员只有四种可见状态：待命、执行中、等待他人、已交付。**不加第五种**，状态越多越难扫读。
 - 主管的每一次招人都要在对话区留一行细体记录（谁招了谁、为什么），不进团队视图的卡片里。团队视图只表达"现在谁在干什么"。
-- 提问卡**不进模态**，不抢焦点。用户正在打字时它静默排队。
+- 提问卡（v0.6 不启用）**不进模态**，不抢焦点。用户正在打字时它静默排队。
 - 交付完成时，凡是在用户缺席期间由主管自主决定的事项，必须在交付卡片末尾单独列出，不能只写在正文里。
 
 ## Tools exposed to agents
@@ -100,7 +99,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `create_agent(role, persona)` | 主管 / PM / 组长 | 受 `depth`、`children_limit`、`tokens_limit` 三重约束 |
 | `send_message(to, kind, content, refs?, await?)` | 所有 agent | `kind` 决定语义；`refs` 传引用而非复述 |
-| `ask_user(question, context)` | **仅主管** | 复用 `pendingQuestions`，超时转自主决策 |
+| `ask_user(question, context)` | **不暴露给团队成员（v0.6）** | 交付期间没有人在看会话；主管做假设并在最终交付里列出 |
 | `finish(summary, refs)` | 所有 agent | 结束自己的 task，人仍留在 `idle` |
 
 消息必须能挂引用（文件路径、task id、上一条消息 id、artifact）。只传自然语言会让下游丢失上下文，这是这类系统最常见的失效点。
@@ -132,7 +131,7 @@ sequenceDiagram
 4. 下游退回同一环节两次，第二次被拒绝并升级给主管。
 5. 问答链超过深度上限时强制 escalate，不再继续追问。
 6. 用户不在超过阈值后，主管自主决策且最终交付包含显式标注。
-7. 非主管调用 `ask_user` 被拒绝，错误信息说明正确路径。
+7. 团队成员无法调用 `ask_user`：工具不注册，模型只能发消息或把假设写进结果。
 8. 桌面 `desktop-continuous` 与手机 `web-remote-replayable` 两条链路都能还原同一段团队消息流。
 9. `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed` 通过；未执行的平台或模型路径如实标注。
 
@@ -178,12 +177,12 @@ sequenceDiagram
 1. **不自建 Runtime。** 复用 `createScriptWorkflowAgentRuntime`——每条 agent 是一个真实会话，transcript、权限、工具、模型解析全部沿用现有机制。团队的"持久"由会话持久化承担，不是自造的一份存储。
 2. **成员的会话是产品里看得见的会话**，不是影子进程。所以在现有子会话列表里能看到每个成员在干什么。
 3. **成员跑在 `yolo` 模式。** 整次交付发生在一个工具调用内部，每个权限弹窗都会把主回合挂在那里等人。边界应由团队配置表达（可写目录 / 可跑命令），而不是逐个成员弹窗——这一条是 v0.1 的取舍，见下方缺口。
-4. **`StartTeam` 是同步阻塞的。** 它等主管交付才返回，中途取消走既有取消链。这换来零协议改动，代价是无法在等待期间异步回答主管的提问。
+4. **`StartTeam` 是同步阻塞的。** 它等主管交付才返回，中途取消走既有取消链。这换来零协议改动；团队交付期间不向用户提问，所以不需要异步问答通道。
 
 ### 尚未接入（v0.2 必须补）
 
 - **没有团队视图。** 组织树、谁在等谁、任务板都没有投影，只能逐个点开子会话看。
-- **主管问用户没有走 `pendingQuestions`。** 现在是阻塞式，用户不在就只能等超时后自主决策。
+- **团队不提供中途提问（v0.6 决策）。** `ask_user` 不暴露；主管做假设并在最终交付里列出，不再有阻塞等待用户的路径。
 - **没有协议事件。** `desktop-continuous` 与 `web-remote-replayable` 都还没接，手机重连看不到团队消息流。
 - **团队级权限边界未执行。** `yolo` 是临时取舍；真实边界需要一次确认后落成规则集。
 - **成员模型选择未接。** 全部继承父会话当前模型。
@@ -288,10 +287,19 @@ sequenceDiagram
 `team_member.module` 是**独占范围**（目录、文件或职责），三处用它：
 
 1. `CreateTeammate({ module })` 写入，组建期的提示词强制要求；
-2. 每次唤醒的提示词里写「你负责的模块：X，不要改动模块之外的代码」；
+2. 成员创建时写进 persona（system prompt）；运行中 `updateMember` 改了模块或职责，`team-runtime` 在下一轮开始前重算 persona 并只刷新 system prompt，不重建会话；
 3. 面板成员树第二行显示「负责 X · 当前任务」。
 
 这让「谁该做这件事」不再由主管每轮重新猜，也让两个成员不会踩同一批文件。
+
+### 提示词分层
+
+成员创建时（`team-runtime` 用 `workflowActor.persona` 建 runtime）把身份、岗位、职责、模块边界、会话记忆声明写进 system prompt，并使用团队专用契约：工作来自同事消息，工具是 `CreateTeammate` / `MessageTeammate` / `SubmitTask` / `DeliverResult`，没有 `submit_result` / `escalate`，也没有问用户的工具。每次唤醒的用户提示只放本轮动态上下文：团队目标、成员名册、权限、未完成任务、收件箱、成员记忆、组建/交付模式；不再重复已经固化的人设。
+
+模块与目标的变化处理：
+
+- 模块：`updateMember` 改了 `module` 或 `purpose` 后，`team-runtime` 在下一轮开始前用同一份人设函数重算 persona，并只刷新 system prompt，不重建 runtime（重建会丢进程内 `messageHistory`）。
+- 团队目标：每次交付由 `startRequirement` / `beginStaffing` 重写，不能写进创建时的 persona，留在每轮提示。
 
 ### 独立记忆
 

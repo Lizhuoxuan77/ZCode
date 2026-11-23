@@ -243,11 +243,11 @@ export interface AgentRuntimeConfig {
   // Context Builder config
   systemPrompt?: string;
   /**
-   * 动态工作流子代理的身份输入：在场即让
-   * context builder 走「基座 + 工作流子代理契约 + persona 叠加」路径，而不是把 persona 当
-   * `systemPrompt` 整段替换。与 `systemPrompt` 互斥（builder 抛错）。
+   * 子代理身份输入：在场即让 context builder 走「基座 + 身份契约 + persona 叠加」路径，
+   * 而不是把 persona 当 `systemPrompt` 整段替换。与 `systemPrompt` 互斥（builder 抛错）。
+   * `kind` 决定契约：workflow 是脚本创建的一次性子代理；team 是常驻团队成员。
    */
-  workflowActor?: { name?: string; persona?: string };
+  workflowActor?: { name?: string; persona?: string; kind?: "workflow" | "team" };
   /**
    * Selects the subagent-specific context builder for child runtimes. The
    * builder still receives env/date/model data through the normal runtime

@@ -166,6 +166,11 @@ export interface ContextBuilderConfig {
 export interface WorkflowActorContext {
   name?: string;
   persona?: string;
+  /**
+   * 身份类型。`workflow`（默认）是脚本创建的一次性子代理；
+   * `team` 是常驻团队成员——工作来自同事消息，团队工具面与工作流子代理不同。
+   */
+  kind?: "workflow" | "team";
 }
 
 export type ContextUserInstructionsRequest = UserInstructionsOptions;

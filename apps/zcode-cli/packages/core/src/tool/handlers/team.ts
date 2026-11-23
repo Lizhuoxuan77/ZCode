@@ -37,6 +37,7 @@ import {
 } from "@zcode/contracts";
 import { canAssign, canDeliver, canHire, canReject, canSubmit } from "../../team/policy.js";
 import { roleLabel } from "../../team/roles.js";
+import { isToolHandlerFailure } from "../executor/errors.js";
 import type { ToolEntry, ToolExecutionContext, ToolHandler, ToolHandlerFailure } from "../types.js";
 
 /** 业务性拒绝（模型可读、可改道）。与配置故障分开：那种要抛 ConfigurationError。 */
@@ -49,6 +50,10 @@ function fail(message: string): ToolHandlerFailure {
 /**
  * 端口会拒绝几种业务流（问答链熔断、退回超限、重复提交）。这些不是故障，
  * 是模型该知道并改道的规则——转成业务失败，别让它读一段栈。
+ *
+ * 判别失败只能用失败对象独有的字段：TeamTaskRef 本身带 result（提交正文），
+ * 用 `"result" in` 会把成功提交误判成失败，executor 随后按失败投影并触发
+ * outputSchema 校验（2026-11-23 实测 9 次成功提交全部被报成格式错误）。
  */
 function guard<T>(fn: () => T): T | ToolHandlerFailure {
   try {
@@ -109,7 +114,7 @@ const createMemberHandler: ToolHandler = async (input, context) => {
     if (updated === undefined) {
       return fail(`当前端口不支持补职责，${parsed.name} 保持原样`);
     }
-    if ("result" in updated) return updated;
+    if (isToolHandlerFailure(updated)) return updated;
     return {
       message: `已更新 ${updated.name} 的职责：${updated.module || "（模块未设）"}。`,
       memberId: updated.id,
@@ -136,7 +141,7 @@ const createMemberHandler: ToolHandler = async (input, context) => {
       ...(parsed.module === undefined ? {} : { module: parsed.module }),
     }),
   );
-  if ("result" in member) return member;
+  if (isToolHandlerFailure(member)) return member;
   const scope = member.module ? `，负责「${member.module}」` : "";
   return {
     message: `已招入 ${member.name}（${roleLabel(member.role)}）${scope}。派活用 MessageTeammate，收件人写名字。`,
@@ -185,7 +190,7 @@ const messageHandler: ToolHandler = async (input, context) => {
     ...(parsed.awaitReply === undefined ? {} : { awaitReply: parsed.awaitReply }),
     ...(parsed.timeoutSec === undefined ? {} : { timeoutSec: parsed.timeoutSec }),
   });
-  if ("result" in message) return message;
+  if (isToolHandlerFailure(message)) return message;
 
   const waiting = parsed.awaitReply === true;
   return {
@@ -228,7 +233,7 @@ const submitHandler: ToolHandler = async (input, context) => {
       state: parsed.state,
     }),
   );
-  if ("result" in submitted) return submitted;
+  if (isToolHandlerFailure(submitted)) return submitted;
   return {
     message:
       parsed.state === "done"

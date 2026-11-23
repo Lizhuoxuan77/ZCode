@@ -522,6 +522,8 @@ export interface AgentRuntime {
   updateConfig(
     patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
   ): void;
+  /** 替换子代理/团队成员的身份段（system prompt），不重建 runtime。 */
+  updateWorkflowActor(actor: AgentRuntimeConfig["workflowActor"]): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

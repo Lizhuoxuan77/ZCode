@@ -48,6 +48,21 @@ export async function setExecutionState(
   await applyRuntimeExecutionState(this, input, { source: "command", traceContext });
 }
 
+/**
+ * 只替换子代理/团队成员的身份段，不重建 runtime。
+ *
+ * 团队成员的模块与职责可以在创建后由 updateMember 修改；重建 runtime 会丢掉进程内的
+ * messageHistory（同一进程里的新 runtime 不会自动把已落库的 transcript 接回来）。
+ * 在下一轮开始前调用时没有 activeTurn，重建 context prefix 后新 system prompt 才会生效。
+ */
+export function updateWorkflowActor(
+  this: AgentRuntimeInternal,
+  actor: AgentRuntimeConfig["workflowActor"],
+): void {
+  this.config.workflowActor = actor;
+  if (!this.activeTurn) rebuildContextPrefix(this);
+}
+
 export function updateConfig(
   this: AgentRuntimeInternal,
   patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,

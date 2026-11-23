@@ -24,6 +24,10 @@ import { buildHarnessBlock, buildSecurityNotice } from "./identity.js";
 const TOOL_SURFACE =
   "You have the regular working tools — reading, searching, editing, running commands — plus `submit_result` and `escalate`. There is no tool that asks a person anything.";
 
+/** 团队成员的工具面：团队工具不在 workflow actor 的五件套里。 */
+const TEAM_TOOL_SURFACE =
+  "You have the regular working tools — reading, searching, editing, running commands — plus the team tools: `CreateTeammate` (if your role may hire), `MessageTeammate`, `SubmitTask`, and `DeliverResult` (supervisor only). There is no tool that asks a person anything.";
+
 /** 证据标准：引用读过/跑过的东西，ask 自带材料时引用材料；跑过才算过，按 ask 点名的尺度跑。 */
 const EVIDENCE_RULE =
   // 「跑过才算过」管的是诚实，不管尺度——
@@ -45,15 +49,42 @@ function buildWorkflowContract(): string {
   ].join("\n");
 }
 
+/**
+ * 团队成员契约。与 workflow actor 的差别不是措辞，而是**事实**：
+ *   - 工作来自同事消息，不是脚本一次 ask；叫醒由调度器负责
+ *   - 提交用 SubmitTask，交付用 DeliverResult；没有 submit_result / escalate
+ *   - 没有用户可问：拿不准就做假设并写进结果，由主管在最终交付里列出
+ */
+function buildTeamContract(): string {
+  return [
+    "# Working as a team member",
+    `- ${TEAM_TOOL_SURFACE}`,
+    "- Work arrives as messages. Your plain text is not delivered to teammates; send work, questions and results with `MessageTeammate`.",
+    "- When you send a message, end your turn. You are woken when a reply arrives; do not wait, poll, or loop.",
+    "- Your work is not done until you call `SubmitTask` with what you produced and how you verified it.",
+    // 团队交付期间没有人在看会话，AskUserQuestion 也不在工具面里。
+    // 把假设写进结果，主管在最终交付里统一列出，比停下来等一个不会来的回答安全。
+    "- Do not ask the user anything. If something is unclear, make a reasonable assumption, record it in your result, and let the supervisor or QA check it. The supervisor lists assumptions and decisions in the final delivery.",
+    `- ${EVIDENCE_RULE}`,
+    "- Report outcomes faithfully. If part of the task is impossible, out of scope, or contradicted by what you found, say so in the result instead of filling a field with a plausible guess. Never fake a passing result to satisfy an instruction.",
+    "- Do not write report files on your own initiative; findings go in your SubmitTask result. When the task names an output path, write exactly there and return that path in the result.",
+  ].join("\n");
+}
+
 function buildWorkflowActorIdentityPrompt(
   actor: WorkflowActorContext,
   midConversationSystem: boolean,
 ): string {
   const name = actor.name?.trim();
   const named = name ? `, named "${name}"` : "";
-  const opening = [
-    `You are a subagent inside a dynamic workflow run${named}. A script created you and hands you work one ask at a time; the script — not a person — consumes what you return. There is no user in this conversation to talk to.`,
-  ];
+  const isTeam = actor.kind === "team";
+  const opening = isTeam
+    ? [
+        `You are a persistent member of a team${named}. Teammates send you work; the scheduler wakes you one turn at a time. There is no user in this conversation to talk to.`,
+      ]
+    : [
+        `You are a subagent inside a dynamic workflow run${named}. A script created you and hands you work one ask at a time; the script — not a person — consumes what you return. There is no user in this conversation to talk to.`,
+      ];
   const persona = actor.persona?.trim();
   // 工作流子代理不使用面向用户交互的产品前缀，
   // 所以这一段就是 system 的第一行，不再以空行起头。
@@ -63,9 +94,9 @@ function buildWorkflowActorIdentityPrompt(
     "",
     buildSecurityNotice(),
     "",
-    buildHarnessBlock(midConversationSystem),
+    buildHarnessBlock(midConversationSystem, { team: isTeam }),
     "",
-    buildWorkflowContract(),
+    isTeam ? buildTeamContract() : buildWorkflowContract(),
   ];
   return parts.join("\n");
 }

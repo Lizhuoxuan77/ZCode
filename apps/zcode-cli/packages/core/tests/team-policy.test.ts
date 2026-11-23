@@ -4,7 +4,6 @@ import {
   DEFAULT_TEAM_LIMITS,
   canAssign,
   canHire,
-  canAskUser,
   canDeliver,
   canReject,
   canSubmit,
@@ -50,12 +49,10 @@ describe("team policy", () => {
     expect(canAssign("pm", "lead").ok).toBe(false);
   });
 
-  it("只有主管能问用户、能交付", () => {
+  it("只有主管能交付；团队交付期间没有问用户的工具", () => {
     const others: TeamRole[] = ["pm", "ui", "lead", "fe", "be", "qa"];
-    expect(canAskUser("supervisor").ok).toBe(true);
     expect(canDeliver("supervisor").ok).toBe(true);
     for (const role of others) {
-      expect(canAskUser(role).ok).toBe(false);
       expect(canDeliver(role).ok).toBe(false);
     }
   });

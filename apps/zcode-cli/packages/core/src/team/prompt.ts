@@ -4,10 +4,9 @@
 // 一个成员被唤醒时看到的全部信息。刻意做成纯函数：同样的状态必然拼出同样的提示，
 // 出问题时可复现（每次唤醒都从磁盘装载，没有任何内存里的上下文可以漂移）。
 //
-// 这里的目标不是把话说全，而是**让模型没有借口**：
-//   - 我是谁、我负责哪块（权限在工具层还会再拦一次）
-//   - 这一轮为什么醒（哪几条消息刚到）
-//   - 干完了该调哪个工具（不调就等于这一轮白跑）
+// 这里只负责「这一轮」：为什么醒、要处理什么、干完该调哪个工具。
+// 身份、岗位、模块边界与会话记忆由成员创建时的 system prompt 承担（buildMemberPersona）；
+// 每轮重复那些静态内容只会让同一个人每次醒来都重读同一段话。
 
 import type { TeamMemberRef, TeamMessageRef, TeamTaskRef } from "@zcode/contracts";
 import { assignableRoles, hirableRoles } from "./policy.js";
@@ -44,6 +43,23 @@ function messageLine(message: TeamMessageRef, members: readonly TeamMemberRef[])
   return `【${message.kind}】来自 ${name}：\n${message.content}${refs}`;
 }
 
+/**
+ * 成员的人设（system prompt）。创建 runtime 时写一次；模块或职责改了，
+ * team-runtime 在下一轮开始前用同一函数重算并刷新 system prompt，不重建会话。
+ */
+export function buildMemberPersona(member: TeamMemberRef): string {
+  return [
+    roleBrief(member.role),
+    `这个岗位在本团队里的职责：${member.purpose}`,
+    member.module
+      ? `你负责的模块：${member.module}。这个范围内的事由你决定；范围外要改，先找负责人商量。`
+      : "",
+    "你的会话是你的独立记忆：同事看不到你的上下文，你也看不到他们的。需要对齐就发消息。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function buildTeamTurnPrompt(context: TeamTurnContext): string {
   const { member, members, inbox, tasks } = context;
   const openTasks = tasks.filter((task) => task.ownerId === member.id && task.state === "open");
@@ -52,19 +68,8 @@ export function buildTeamTurnPrompt(context: TeamTurnContext): string {
 
   const sections: string[] = [];
 
-  sections.push(
-    [
-      `你是「${member.name}」，团队里的${roleLabel(member.role)}。`,
-      roleBrief(member.role),
-      member.module
-        ? `你这个岗位在项目里负责的模块：${member.module}。不要改动模块之外的代码；需要别人配合就发消息。`
-        : "",
-      "你的会话就是你的记忆，只属于你：同事看不到你在这里想过什么，也不会继承你的上下文。",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
-
+  // 团队目标每次交付都会重写（startRequirement / beginStaffing），不能固化进创建时的 persona。
+  // 模块边界已经从每轮提示移走：它属于 system prompt，改了模块由 runner 在下一轮前刷新。
   sections.push(`团队目标：${context.goal}`);
 
   sections.push(
@@ -78,7 +83,9 @@ export function buildTeamTurnPrompt(context: TeamTurnContext): string {
       "你的权限：",
       hire.length > 0 ? `- 可以招：${hire.map(roleLabel).join("、")}` : "- 不能招人",
       assign.length > 0 ? `- 可以派活给：${assign.map(roleLabel).join("、")}` : "- 不能给别人派活",
-      member.role === "supervisor" ? "- 可以问用户" : "- 遇到拿不准的：向上级上报，不要找用户",
+      member.role === "supervisor"
+        ? "- 不能中途问用户：拿不准就做合理假设，并在最终交付里列出"
+        : "- 遇到拿不准的：向上级上报，不要找用户",
     ].join("\n"),
   );
 

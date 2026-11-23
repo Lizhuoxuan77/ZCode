@@ -5,6 +5,7 @@ import {
   getSessionShellSelection,
   initializeSessionShellEnvironmentIfNeeded,
   updateConfig,
+  updateWorkflowActor,
   setExecutionState,
 } from "./config.js";
 import { getMode, getPlanEnabled } from "./config.js";
@@ -214,6 +215,7 @@ type AgentRuntimeConstructor = { prototype: object };
 export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void {
   const proto = ctor.prototype as Record<string, unknown>;
   proto.updateConfig = updateConfig;
+  proto.updateWorkflowActor = updateWorkflowActor;
   proto.setExecutionState = setExecutionState;
   proto.grantPermissionMode = grantPermissionMode;
   proto.initializeSessionShellEnvironmentIfNeeded = initializeSessionShellEnvironmentIfNeeded;

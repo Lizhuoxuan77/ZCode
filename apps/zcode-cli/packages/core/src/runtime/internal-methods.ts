@@ -72,6 +72,7 @@ export interface AgentRuntimeCoreMethods {
   updateConfig(
     patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
   ): void;
+  updateWorkflowActor(actor: AgentRuntimeConfig["workflowActor"]): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

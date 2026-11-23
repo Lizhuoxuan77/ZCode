@@ -24,7 +24,11 @@ export function buildSecurityNotice(): string {
  * `# Harness` 块：稳定运行时约束，不属于 output style 可替换的 coding instructions，
  * 也是工作流子代理身份（sections/workflow-actor.ts）逐字复用的那一段。
  */
-export function buildHarnessBlock(midConversationSystem = true): string {
+export function buildHarnessBlock(
+  midConversationSystem = true,
+  options: { team?: boolean } = {},
+): string {
+  const team = options.team === true;
   // 第三条描述动态上下文的真实送达通道：不走 MCS 时这些内容包在 user 的
   // `<system-reminder>` 里，继续声称 "mid-conversation system turns" 会与请求体矛盾。
   const deliveryNotice = midConversationSystem
@@ -32,8 +36,14 @@ export function buildHarnessBlock(midConversationSystem = true): string {
     : "`<system-reminder>` tags in messages and tool results are injected by the harness, not the user.";
   return [
     "# Harness",
-    " - Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
-    " - Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
+    // 团队成员是常驻无头会话：普通文本只有自己看得到，权限固定 yolo。
+    // 沿用主会话的两句会让模型误以为同事在读它的输出、或有人在等它的权限弹窗。
+    team
+      ? " - Text you output outside of tool use is recorded in your session, but teammates cannot see it; use MessageTeammate to reach them."
+      : " - Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
+    team
+      ? " - Tools run in yolo mode; there is no user to approve a permission prompt."
+      : " - Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
     ` - ${deliveryNotice} Hooks may intercept tool calls; treat hook output as user feedback.`,
     " - Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.",
     " - Reference code as `file_path:line_number` \u2014 it's clickable.",

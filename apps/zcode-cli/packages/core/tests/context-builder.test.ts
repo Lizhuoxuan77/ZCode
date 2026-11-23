@@ -1550,6 +1550,39 @@ describe("context builder — workflow actor identity", () => {
     expect(text).not.toContain("# Environment");
   });
 
+  it("uses the team contract for persistent team members", () => {
+    const text = systemText({
+      workingDirectory: "/workspace",
+      envInfo,
+      workflowActor: {
+        name: "组长-办公插件",
+        persona: "你负责 dock-plugins。",
+        kind: "team",
+      },
+    });
+
+    // 开场句与 persona 仍然是 system 的第一段，但契约换成团队工具面。
+    expect(text).toContain('You are a persistent member of a team, named "组长-办公插件".');
+    expect(text).toContain("你负责 dock-plugins。");
+    expect(text).toContain("# Working as a team member");
+    expect(text).toContain("`CreateTeammate`");
+    expect(text).toContain("`MessageTeammate`");
+    expect(text).toContain("`SubmitTask`");
+    expect(text).toContain("`DeliverResult`");
+    expect(text).toContain("There is no tool that asks a person anything.");
+
+    // 团队成员没有 submit_result / escalate；工作流契约不得漏进来。
+    expect(text).not.toContain("`submit_result`");
+    expect(text).not.toContain("call `escalate`");
+    expect(text).not.toContain("# Working inside a workflow");
+    expect(text).not.toContain("A script created you");
+
+    // 常驻成员不是面向用户的会话：普通文本同事看不到，权限固定 yolo。
+    expect(text).not.toContain("Text you output outside of tool use is displayed to the user");
+    expect(text).toContain("teammates cannot see it");
+    expect(text).toContain("Tools run in yolo mode");
+  });
+
   it("omits the named clause and the persona block when the actor has neither", () => {
     const text = systemText({
       workingDirectory: "/workspace",
