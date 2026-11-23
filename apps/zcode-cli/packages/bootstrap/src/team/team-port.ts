@@ -102,6 +102,8 @@ export function createTeamPort(input: {
       },
       concurrency: current.concurrency,
       maxDurationMs: current.maxDurationMs,
+      turnTimeoutMs: current.turnTimeoutMs,
+      stallTimeoutMs: current.stallTimeoutMs,
       logger: input.logger,
       projectName: basename(input.workingDirectory) || current.name,
       memoryDir: join(input.workingDirectory, TEAM_MEMORY_RELATIVE_PATH),

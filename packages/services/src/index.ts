@@ -162,6 +162,10 @@ export type {
   ZCodeTeamTaskView,
   ZCodeTeamMessageView,
 } from "./zcode-agent/teamSnapshot.js";
+export type {
+  ZCodeTeamMemberMemoryParams,
+  ZCodeTeamMemberMemoryResult,
+} from "./zcode-agent/teamMemory.js";
 export {
   isZCodeAgentModelSelectionBasisUnsupportedError,
   ZCodeAgentModelSelectionBasisUnsupportedError,

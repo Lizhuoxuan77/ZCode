@@ -369,6 +369,10 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
     workspaceIdentity?: string;
     remoteSessionId?: string;
   }) => void;
+  /** 团队架构图是全屏 overlay，与 `team` 侧栏 tab 共用同一份快照投影。 */
+  isTeamArchitectureOpen: boolean;
+  handleOpenTeamArchitecture: () => void;
+  handleCloseTeamArchitecture: () => void;
   handleSyncSubagentSessionTabs: (
     request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest,
   ) => void;

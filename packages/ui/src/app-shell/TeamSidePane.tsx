@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { buildTeamDeliveryPrompt, buildTeamStaffingPrompt } from "@zcode/shared";
-import type { ZCodeTeamSnapshot } from "@zcode/services";
-import { UsersIcon } from "lucide-react";
+import { UsersIcon, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useServices } from "@/hooks/useServices.js";
 import type { TeamSidePaneTab } from "@/lib/workspaceSidePane.js";
+import {
+  TEAM_ROLE_INITIAL,
+  TEAM_ROLE_LABEL,
+  formatTeamClock as clock,
+  formatTeamDuration as duration,
+} from "@/app-shell/teamArchitectureModel.js";
+import { useTeamSnapshot } from "@/app-shell/useTeamSnapshot.js";
 
 /**
  * 团队面板。
@@ -17,8 +23,6 @@ import type { TeamSidePaneTab } from "@/lib/workspaceSidePane.js";
  *   2. running 必须同时给出「在做什么 + 多久」，否则「卡住」和「在写代码」看起来一样。
  */
 
-const POLL_INTERVAL_MS = 2_000;
-
 const PHASES: Array<{ key: string; label: string }> = [
   { key: "plan", label: "规划" },
   { key: "design", label: "设计" },
@@ -26,25 +30,8 @@ const PHASES: Array<{ key: string; label: string }> = [
   { key: "verify", label: "验收" },
 ];
 
-const ROLE_CHIP: Record<string, string> = {
-  supervisor: "统筹",
-  pm: "规划",
-  ui: "设计",
-  lead: "实施",
-  fe: "页面",
-  be: "存储",
-  qa: "验收",
-};
-
-const ROLE_INITIAL: Record<string, string> = {
-  supervisor: "主",
-  pm: "产",
-  ui: "设",
-  lead: "组",
-  fe: "前",
-  be: "后",
-  qa: "测",
-};
+const ROLE_CHIP = TEAM_ROLE_LABEL;
+const ROLE_INITIAL = TEAM_ROLE_INITIAL;
 
 const AVATAR_CLASS: Record<string, string> = {
   supervisor: "bg-violet-500/15 text-violet-300 border-violet-500/40",
@@ -72,18 +59,6 @@ const KIND_CLASS: Record<string, string> = {
   system: "text-muted-foreground bg-muted",
 };
 
-function clock(ms: number): string {
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-function duration(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 1) return "不到 1 分";
-  if (minutes < 60) return `${minutes} 分`;
-  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
-}
-
 function firstLine(text: string, max = 90): string {
   const line = text.split("\n").find((candidate) => candidate.trim().length > 0) ?? text;
   const flat = line.replace(/\s+/g, " ").trim();
@@ -94,50 +69,23 @@ export function TeamSidePane({
   tab,
   onCreateTask,
   onOpenSession,
+  onOpenArchitecture,
 }: {
   tab: TeamSidePaneTab;
-  onCreateTask?: (request: { initialPrompt: string }) => void;
+  onCreateTask?: (request: { initialPrompt: string; autoSend?: boolean }) => void;
   /** 点成员 → 打开它自己的工作会话（成员本来就是一条独立会话）。 */
   onOpenSession?: (sessionId: string) => void;
+  /** 切到架构图：侧栏放不下组织关系，那是另一屏的事。 */
+  onOpenArchitecture?: () => void;
 }) {
   const { zcodeAgentService } = useServices();
-  const [snapshot, setSnapshot] = useState<ZCodeTeamSnapshot | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const { snapshot, error, now, reload: load } = useTeamSnapshot(tab.workspacePath);
   const [teamName, setTeamName] = useState("");
   const [requirement, setRequirement] = useState("");
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | undefined>(undefined);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const aliveRef = useRef(true);
-
-  const load = useCallback(async () => {
-    try {
-      const next = await zcodeAgentService.getTeamSnapshot({
-        workspacePath: tab.workspacePath,
-        messageLimit: 60,
-      });
-      if (!aliveRef.current) return;
-      setSnapshot(next);
-      setError(undefined);
-    } catch (caught) {
-      if (!aliveRef.current) return;
-      setError(caught instanceof Error ? caught.message : String(caught));
-    }
-  }, [tab.workspacePath, zcodeAgentService]);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    void load();
-    const timer = setInterval(() => {
-      setNow(Date.now());
-      void load();
-    }, POLL_INTERVAL_MS);
-    return () => {
-      aliveRef.current = false;
-      clearInterval(timer);
-    };
-  }, [load]);
 
   const createTeam = useCallback(async () => {
     const name = teamName.trim() || "交付小队";
@@ -147,7 +95,8 @@ export function TeamSidePane({
       await zcodeAgentService.writeTeamConfig({ workspacePath: tab.workspacePath, name });
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      // 建团队失败要说给用户听：写 `.zcode/team.json` 可能被权限或磁盘状态挡住。
+      setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
     }
@@ -159,9 +108,10 @@ export function TeamSidePane({
     onCreateTask?.({ initialPrompt: buildTeamDeliveryPrompt(text), autoSend: true });
   }, [onCreateTask, requirement]);
 
-  const members = snapshot?.members ?? [];
-  const tasks = snapshot?.tasks ?? [];
-  const messages = snapshot?.messages ?? [];
+  // 快照每 2 秒换一次引用；这里再派生一次是为了让下面 useMemo 的依赖在渲染之间保持稳定。
+  const members = useMemo(() => snapshot?.members ?? [], [snapshot]);
+  const tasks = useMemo(() => snapshot?.tasks ?? [], [snapshot]);
+  const messages = useMemo(() => snapshot?.messages ?? [], [snapshot]);
   const openTasks = tasks.filter((task) => task.state === "open");
   const running = members.filter((member) => member.status === "running").length;
 
@@ -194,7 +144,9 @@ export function TeamSidePane({
     }
     if (member.status === "waiting") return "等回复";
     if (member.status === "failed") return "失败";
-    if (member.currentTaskTitle) return "排队中";
+    // 「有未完成任务」不等于「在排队」：交付被中断（到时间上限或停滞退出）后调度器已经不在，
+    // 这些人不会再被叫醒。两种情况分开说，否则用户会一直等一个不会开始的任务。
+    if (member.currentTaskTitle) return running > 0 ? "排队中" : "停滞";
     return "空闲";
   };
 
@@ -317,6 +269,11 @@ export function TeamSidePane({
           <Button className="w-full" onClick={() => void createTeam()} disabled={busy}>
             {busy ? "正在创建…" : "创建团队"}
           </Button>
+          {actionError ? (
+            <div className="w-full text-left text-ui-xs leading-relaxed break-all text-destructive">
+              {actionError}
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -397,6 +354,17 @@ export function TeamSidePane({
           >
             {statusPill.text}
           </span>
+          {onOpenArchitecture ? (
+            <button
+              type="button"
+              onClick={onOpenArchitecture}
+              title="打开架构图：看汇报关系、每人状态与记忆"
+              aria-label="打开架构图"
+              className="grid size-5 shrink-0 place-items-center rounded text-foreground-subtlest hover:bg-hover hover:text-foreground-subtle"
+            >
+              <Waypoints className="size-3.5" />
+            </button>
+          ) : null}
           <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
             {members.length} 人
             {openTasks.length > 0 ? ` · 进行中 ${openTasks.length}` : ""}

@@ -24,6 +24,10 @@ import type {
   ZCodeTeamConfigWriteResult,
 } from "#src/zcode-agent/teamConfigWrite.js";
 import type {
+  ZCodeTeamMemberMemoryParams,
+  ZCodeTeamMemberMemoryResult,
+} from "#src/zcode-agent/teamMemory.js";
+import type {
   BackgroundBashOutputResult,
   SessionDebugSnapshot,
   ZCodeSessionContentProfile,
@@ -743,6 +747,13 @@ export interface IZCodeAgentService {
    * 由调用方根据 created 决定提示语。写入后配置读取会自动生效，无需重启会话。
    */
   writeTeamConfig(params: ZCodeTeamConfigWriteParams): Promise<ZCodeTeamConfigWriteResult>;
+  /**
+   * 架构图里点开一个成员时读它的记忆。按需读，不进 `getTeamSnapshot`：
+   * 快照是 2s 一次的轮询，而记忆文件会随轮次增长，塞进快照等于每次轮询读 N 份文件。
+   */
+  getTeamMemberMemory(
+    params: ZCodeTeamMemberMemoryParams,
+  ): Promise<ZCodeTeamMemberMemoryResult>;
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
   previewSessionDeletion?(params: V4SessionDeletionParams): Promise<V4SessionDeletionPreview>;
   executeSessionDeletion?(params: V4SessionDeletionExecuteParams): Promise<V4SessionDeletionResult>;

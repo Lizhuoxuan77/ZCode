@@ -256,6 +256,9 @@ export function App({
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
     handleOpenTeamTab,
+    isTeamArchitectureOpen,
+    handleOpenTeamArchitecture,
+    handleCloseTeamArchitecture,
     handleSyncSubagentSessionTabs,
     handleOpenSelectionSideChat,
     handleOpenPlanDetail,
@@ -1389,6 +1392,9 @@ export function App({
             handleOpenBackgroundBash={handleOpenBackgroundBash}
             handleOpenSubagentDirectory={handleOpenSubagentDirectory}
             handleOpenTeamTab={handleOpenTeamTab}
+            isTeamArchitectureOpen={isTeamArchitectureOpen}
+            handleOpenTeamArchitecture={handleOpenTeamArchitecture}
+            handleCloseTeamArchitecture={handleCloseTeamArchitecture}
             handleSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}
             handleOpenSelectionSideChat={handleOpenSelectionSideChat}
             handleOpenPlanDetail={handleOpenPlanDetail}

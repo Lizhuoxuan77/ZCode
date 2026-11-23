@@ -341,6 +341,7 @@ export function AnimatedSidePanePanel({
   onOpenNewTab,
   onOpenTeamTab,
   onOpenTeamMemberSession,
+  onOpenTeamArchitecture,
   onReorderTab,
   onCloseTab,
   onCloseOtherTabs,
@@ -440,6 +441,8 @@ export function AnimatedSidePanePanel({
     workspaceIdentity?: string;
     sessionId: string;
   }) => void;
+  /** 打开团队架构图（组织一屏）。侧栏太窄画不了图，两者互为入口。 */
+  onOpenTeamArchitecture?: () => void;
   /** "插件"分组打开面板 tab；缺省不渲染分组（web / 无宿主）。 */
   onReorderTab: (activeTabId: string, overTabId: string) => void;
   onCloseTab: (tabId: string) => void;
@@ -1403,6 +1406,9 @@ export function AnimatedSidePanePanel({
                         ) : tab.type === "team" ? (
                           <TeamSidePane
                             tab={tab}
+                            {...(onOpenTeamArchitecture
+                              ? { onOpenArchitecture: onOpenTeamArchitecture }
+                              : {})}
                             {...(onOpenTeamMemberSession
                               ? {
                                   onOpenSession: (sessionId: string) =>

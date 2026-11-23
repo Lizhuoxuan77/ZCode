@@ -249,7 +249,7 @@ export function useRootWorkspaceActions({
             workspaceIdentity,
             mention,
             undefined,
-            options.autoSend,
+            options?.autoSend,
           );
       }
     },

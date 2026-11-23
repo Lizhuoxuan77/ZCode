@@ -75,6 +75,7 @@ import { WebRemoteControlMobileShell } from "@/WebRemoteControlMobileShell.js";
 import { resolveTopOverlayLeadingPaddingClass, WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
 import { AnimatedSidePanePanel } from "@/app-shell/AnimatedSidePanePanel.js";
+import { TeamArchitectureView } from "@/app-shell/TeamArchitectureView.js";
 import {
   findScreenshotSurfaceTabForRender,
   useBrowserScreenshotSurfaceRequest,
@@ -443,6 +444,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleOpenBackgroundBash,
   handleOpenSubagentDirectory,
   handleOpenTeamTab,
+  isTeamArchitectureOpen,
+  handleOpenTeamArchitecture,
+  handleCloseTeamArchitecture,
   handleSyncSubagentSessionTabs,
   handleOpenSelectionSideChat,
   handleOpenPlanDetail,
@@ -2280,6 +2284,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       onOpenTeamMemberSession={({ sessionId, workspacePath, workspaceIdentity: identity }) =>
         handleSelectTaskInChat(workspacePath, sessionId, identity)
       }
+      onOpenTeamArchitecture={handleOpenTeamArchitecture}
       onReorderTab={handleReorderSidePaneTab}
       onCloseTab={handleCloseSidePaneTab}
       onCloseOtherTabs={handleCloseOtherSidePaneTabs}
@@ -2394,19 +2399,22 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       automationsActive={workspaceMainView === "automations"}
       onOpenPluginStore={handleOpenPluginStore}
       pluginStoreActive={workspaceMainView === "plugin-store"}
-      onOpenTeam={() =>
-        handleOpenTeamTab({
-          workspacePath: workspaceAbsPath,
-          ...(workspaceIdentity ? { workspaceIdentity } : {}),
-        })
-      }
+      onOpenTeam={() => {
+        // 「团队」是看组织的入口，默认给能看全的一屏；侧栏仍可从「+」菜单或图内按钮进入。
+        if (isTeamArchitectureOpen) {
+          handleCloseTeamArchitecture();
+          return;
+        }
+        handleOpenTeamArchitecture();
+      }}
       teamActive={
         workspaceMainView === "chat" &&
-        (sidePaneState?.tabs ?? []).some(
-          (tab) =>
-            tab.type === "team" &&
-            tab.workspaceKey === (workspaceIdentity?.trim() || workspaceAbsPath),
-        )
+        (isTeamArchitectureOpen ||
+          (sidePaneState?.tabs ?? []).some(
+            (tab) =>
+              tab.type === "team" &&
+              tab.workspaceKey === (workspaceIdentity?.trim() || workspaceAbsPath),
+          ))
       }
       navPrimarySlot={navPrimarySlot}
       // 桌面没有 mobile 导航动作；内联包装曾让右侧开关穿透侧栏 memo，重复渲染全部项目。
@@ -3238,6 +3246,21 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       headerTestId={TID_APP_HEADER}
     >
       {isWebRemoteControlShell ? renderRemoteShell(wideContent) : wideContent}
+      <TeamArchitectureView
+        workspacePath={workspaceAbsPath}
+        open={isTeamArchitectureOpen}
+        onClose={handleCloseTeamArchitecture}
+        onOpenCompactPane={() =>
+          handleOpenTeamTab({
+            workspacePath: workspaceAbsPath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+          })
+        }
+        onCreateTask={(request) => handleCreateTaskInChat(request)}
+        onOpenSession={(sessionId) =>
+          handleSelectTaskInChat(workspaceAbsPath, sessionId, workspaceIdentity)
+        }
+      />
     </DesktopWindowFrame>
   );
 });

@@ -306,6 +306,9 @@ export function useAppPanels(options: {
   // 这样即使侧栏被隐藏，入口也仍然留在左上角，不会出现"收起后没有地方再展开"的问题；
   // 同时这里统一处理 macOS 红绿灯安全区，避免按钮和系统窗口控件重叠。
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  // 团队架构图是独立于侧栏的一层（侧栏 320px 画不出图），所以它有自己的一开关；
+  // 与 `team` 侧栏 tab 同属一个域，导航高亮同时认这两者。
+  const [isTeamArchitectureOpen, setIsTeamArchitectureOpen] = useState(false);
   const [browserNavigationRequest, setBrowserNavigationRequest] =
     useState<BrowserNavigationRequest | null>(null);
   const [allRecentClosedSidePaneTabs, setAllRecentClosedSidePaneTabs] = useState<
@@ -1393,6 +1396,14 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState, revealSidePaneForCurrentOwner],
   );
 
+  const handleOpenTeamArchitecture = useCallback(() => {
+    setIsTeamArchitectureOpen(true);
+  }, []);
+
+  const handleCloseTeamArchitecture = useCallback(() => {
+    setIsTeamArchitectureOpen(false);
+  }, []);
+
   const handleSyncSubagentSessionTabs = useCallback(
     (request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest) => {
       // 分支 edit/retry 的失效 tab 属于投影清理，不进入“最近关闭”。
@@ -2161,6 +2172,9 @@ export function useAppPanels(options: {
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
     handleOpenTeamTab,
+    isTeamArchitectureOpen,
+    handleOpenTeamArchitecture,
+    handleCloseTeamArchitecture,
     handleSyncSubagentSessionTabs,
     handleOpenSelectionSideChat,
     handleOpenPlanDetail,

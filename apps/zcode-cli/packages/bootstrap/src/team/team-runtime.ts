@@ -9,13 +9,44 @@
 // 差别只在驱动者。workflow 由脚本决定叫谁跑，团队由邮箱决定。
 
 import { buildMemberPersona, type AgentRuntime } from "@zcode/core";
-import type { Logger, TeamMemberRef, TraceContext } from "@zcode/contracts";
+import {
+  SessionEventType,
+  type Logger,
+  type TeamMemberRef,
+  type TraceContext,
+} from "@zcode/contracts";
 import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
 } from "../app/script-workflow-child-runtime.js";
 import { workflowActorToolPolicy } from "../app/workflow-actor-tools.js";
 import type { TeamTurnRunner } from "./team-service.js";
+
+/**
+ * 这些事件说明这一轮**真的在推进**：模型开始请求、流式吐字、工具开跑/出结果、压缩在动。
+ *
+ * 看门狗据此判断「多久没有输出」，而不是用墙钟判「跑了多久」——同一个 10 分钟，
+ * 一直在写文件是健康的，一个 chunk 都没有才是卡住。白名单宁可宽：漏加一类的症状是
+ * 把正常的长任务误判成卡住，那比放过一次真卡住更糟。
+ */
+const TURN_ACTIVITY_EVENTS: ReadonlySet<string> = new Set([
+  SessionEventType.ModelRequest,
+  SessionEventType.ModelStreaming,
+  SessionEventType.ModelComplete,
+  SessionEventType.AssistantMessage,
+  SessionEventType.ToolCallScheduled,
+  SessionEventType.ToolCallStarted,
+  SessionEventType.ToolCallProgress,
+  SessionEventType.ToolCallResult,
+  SessionEventType.ToolCallError,
+  SessionEventType.ToolBatchComplete,
+  SessionEventType.StreamRecoveryStarted,
+  SessionEventType.StreamRecoveryRetryStarted,
+  SessionEventType.BackgroundTaskUpdated,
+  SessionEventType.HookRunProgress,
+  SessionEventType.CompactStarted,
+  SessionEventType.CompactCompleted,
+]);
 
 export interface AgentRuntimeTeamRunner extends TeamTurnRunner {
   /**
@@ -35,13 +66,20 @@ export function createAgentRuntimeTeamRunner(input: {
   const runtimes = new Map<string, AgentRuntime>();
   /** 创建 runtime 时写进 system prompt 的 persona 快照；模块/职责改了要对比它。 */
   const personas = new Map<string, string>();
+  /**
+   * 当前这一轮的活动回调。事件订阅是 runtime 级的（跨轮复用），而「谁在听」是 turn 级的，
+   * 所以这里只挂一个可变引用：本轮结束后清空，避免把心跳记到一个已经交还的轮次上。
+   */
+  const activityHooks = new Map<string, (() => void) | undefined>();
+  const unsubscribers = new Map<string, () => void>();
 
   return {
     async prepare(member: TeamMemberRef) {
       await ensureRuntime(member);
     },
 
-    async run({ member, prompt, signal }) {
+    async run({ member, prompt, signal, onActivity }) {
+      activityHooks.set(member.id, onActivity);
       try {
         const runtime = await ensureRuntime(member);
         syncPersona(runtime, member);
@@ -52,10 +90,15 @@ export function createAgentRuntimeTeamRunner(input: {
       } catch (error) {
         if (signal.aborted) return { ok: false, error: "cancelled" };
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      } finally {
+        activityHooks.set(member.id, undefined);
       }
     },
 
     async dispose() {
+      for (const unsubscribe of unsubscribers.values()) unsubscribe();
+      unsubscribers.clear();
+      activityHooks.clear();
       const all = [...runtimes.values()];
       runtimes.clear();
       personas.clear();
@@ -104,6 +147,18 @@ export function createAgentRuntimeTeamRunner(input: {
 
     // 必须先把会话落库：transcript 的归属靠这条会话，冷恢复也靠它。
     await runtime.ensureSessionPersistedForExternalActivity(`团队 · ${member.name}`);
+    // 订阅会话事件当「活性心跳」：看门狗据此判断这一轮多久没有输出，而不是用墙钟判跑了多久。
+    // 订阅是 runtime 级的，跨轮复用；每轮由 activityHooks 决定这颗心跳记给谁。
+    unsubscribers.set(
+      member.id,
+      runtime.subscribeEvents({
+        onSessionEvent: (event) => {
+          if (event.sessionId !== member.sessionId) return;
+          if (!TURN_ACTIVITY_EVENTS.has(event.type)) return;
+          activityHooks.get(member.id)?.();
+        },
+      }),
+    );
     runtimes.set(member.id, runtime);
     personas.set(member.id, persona);
     input.logger.info(`Team member session created: ${member.name}`, {

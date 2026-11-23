@@ -6,19 +6,31 @@ import { TeamService, type TeamTurnRunner } from "../src/team/team-service.js";
 import { TeamStore } from "../src/team/team-store.js";
 
 const dirs: string[] = [];
+const stores: TeamStore[] = [];
 
 function newStore(limits: { maxRevisions?: number } = {}): TeamStore {
   const dir = mkdtempSync(join(tmpdir(), "zcode-team-"));
   dirs.push(dir);
-  return new TeamStore({
+  const store = new TeamStore({
     file: join(dir, "team.db"),
     limits: { maxMembers: 6, maxDepth: 3, maxRevisions: 1, maxQuestionHops: 3, ...limits },
     idPrefix: "t",
   });
+  stores.push(store);
+  return store;
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // Windows 下 sqlite 句柄没关时删目录会 EPERM，而这个错误会把断言结果整个盖掉。
+  // 先关库再删；删不掉也只是临时目录残留，不该让整条用例失败。
+  for (const store of stores.splice(0)) store.close();
+  for (const dir of dirs.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // 临时目录由系统清理。
+    }
+  }
 });
 
 /** 只按「看到什么消息」做决定——和真模型的输入面完全一致。 */
@@ -30,7 +42,9 @@ function scriptedRunner(store: TeamStore): TeamTurnRunner {
           store.deliver({ fromSessionId: member.sessionId, content: "超时后按默认方案交付。" });
           return { ok: true };
         }
-        if (prompt.includes("提交")) {
+        // 判据必须是「收到同事的结果」，不能用「提交」二字：提示词模板里
+        // 「干完了用 SubmitTask 提交」每轮都在，用它会第一轮就判定交付，从没招过人。
+        if (prompt.includes("【result】")) {
           store.deliver({ fromSessionId: member.sessionId, content: "交付：规划 + 实现。" });
           return { ok: true };
         }
@@ -84,6 +98,23 @@ describe("team scheduler", () => {
     expect(store.members().map((member) => member.status)).toEqual(["idle", "idle"]);
   });
 
+  it("maxDurationMs = 0 表示不限，不会因为「已运行 0 毫秒」立即超时", async () => {
+    const store = newStore();
+    const service = new TeamService({
+      store,
+      runner: scriptedRunner(store),
+      supervisor: { name: "主管", role: "supervisor", purpose: "接需求" },
+      pollMs: 5,
+      stallTicks: 10,
+      maxDurationMs: 0,
+    });
+
+    const result = await service.run({ requirement: "给列表页加导出按钮" });
+
+    expect(result.ok).toBe(true);
+    expect(store.delivery()).toBeDefined();
+  });
+
   it("等待超时是一条消息，不是异常：等待者被叫醒后能自己决定", async () => {
     const store = newStore();
     const runner: TeamTurnRunner = {
@@ -126,6 +157,233 @@ describe("team scheduler", () => {
     const result = await service.run({ requirement: "导出" });
     expect(result.ok).toBe(true);
     expect(result.summary).toContain("默认值");
+  });
+
+  it("等待方不会因为对方这一轮还没跑完就被判超时", () => {
+    const store = newStore();
+    const supervisor = store.createSupervisor({ name: "主管", role: "supervisor", purpose: "接需求" });
+    store.startRequirement(supervisor.id, "做点事");
+    store.createMember({ bySessionId: supervisor.sessionId, name: "产品", role: "pm", purpose: "出规划" });
+    const pm = store.memberByName("产品")!;
+
+    const supervisorTurn = store.claimTurn(supervisor);
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "产品",
+      kind: "task",
+      content: "写 plan.md",
+      awaitReply: true,
+      // 租约立即到期，模拟「600 秒租约比 900 秒单轮上限短」的必然冲突。
+      timeoutSec: -1,
+    });
+    store.finishTurn({ turnId: supervisorTurn.turnId, memberId: supervisor.id, awaitingReply: true });
+    expect(store.memberById(supervisor.id)?.status).toBe("waiting");
+
+    // 产品还在这一轮里干活：租约到期也不能算「没回复」。
+    const pmTurn = store.claimTurn(pm);
+    expect(store.expireWaits(15 * 60_000)).toBe(0);
+    expect(store.memberById(supervisor.id)?.status).toBe("waiting");
+
+    // 产品这一轮结束了却没回复：超时立即送达，不必再等原定 deadline。
+    store.finishTurn({ turnId: pmTurn.turnId, memberId: pm.id, awaitingReply: false });
+    expect(store.expireWaits(15 * 60_000)).toBe(1);
+    expect(store.memberById(supervisor.id)?.status).toBe("idle");
+    expect(store.readyMembers(5).map((member) => member.name)).toContain("主管");
+  });
+
+  it("清空租约时把 waiting 放回 idle，否则这些人永远不会再被调度", () => {
+    const store = newStore();
+    const supervisor = store.createSupervisor({ name: "主管", role: "supervisor", purpose: "接需求" });
+    store.startRequirement(supervisor.id, "做点事");
+    store.createMember({ bySessionId: supervisor.sessionId, name: "产品", role: "pm", purpose: "出规划" });
+
+    const turn = store.claimTurn(supervisor);
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "产品",
+      kind: "task",
+      content: "写 plan.md",
+      awaitReply: true,
+    });
+    store.finishTurn({ turnId: turn.turnId, memberId: supervisor.id, awaitingReply: true });
+    expect(store.memberById(supervisor.id)?.status).toBe("waiting");
+
+    store.clearWaits();
+
+    expect(store.hasWaiting()).toBe(false);
+    expect(store.memberById(supervisor.id)?.status).toBe("idle");
+    // 下一次发起会往它邮箱投新任务；那时它必须能被选中（readyMembers 只选 idle）。
+    store.startRequirement(supervisor.id, "第二票活");
+    expect(store.readyMembers(5).map((member) => member.name)).toContain("主管");
+  });
+
+  it("对方结束时还有未读消息，不能把等待它的租约拨早成 0 秒假超时", () => {
+    const store = newStore();
+    const supervisor = store.createSupervisor({ name: "主管", role: "supervisor", purpose: "接需求" });
+    store.startRequirement(supervisor.id, "做点事");
+    store.createMember({ bySessionId: supervisor.sessionId, name: "产品", role: "pm", purpose: "出规划" });
+    const pm = store.memberByName("产品")!;
+
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "产品",
+      kind: "task",
+      content: "写 plan.md",
+      awaitReply: true,
+      timeoutSec: 600,
+    });
+
+    // 产品正在跑这一轮时，又收到一条消息（还没读到）。
+    const pmTurn = store.claimTurn(pm);
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "产品",
+      kind: "question",
+      content: "顺便确认一下配色",
+    });
+
+    // 这一轮结束时收件箱还有未读：它马上会被重新叫醒去处理，此刻不许判超时。
+    store.finishTurn({ turnId: pmTurn.turnId, memberId: pm.id, awaitingReply: false });
+    expect(store.expireWaits(15 * 60_000)).toBe(0);
+    expect(store.readyMembers(5).map((member) => member.name)).toContain("产品");
+  });
+
+  it("看门狗：一轮长时间没有任何输出就判卡住，交给上级而不是自动重试", async () => {
+    const store = newStore();
+    const runner: TeamTurnRunner = {
+      async run({ member, prompt, signal }) {
+        if (member.role === "supervisor") {
+          if (prompt.includes("[卡住]")) {
+            store.deliver({
+              fromSessionId: member.sessionId,
+              content: "产品卡住了，我按已有产出先交付。",
+            });
+            return { ok: true };
+          }
+          if (!store.memberByName("产品")) {
+            store.createMember({
+              bySessionId: member.sessionId,
+              name: "产品",
+              role: "pm",
+              purpose: "出规划",
+            });
+            store.send({
+              fromSessionId: member.sessionId,
+              to: "产品",
+              kind: "task",
+              content: "写 plan.md",
+              awaitReply: true,
+            });
+          }
+          return { ok: true };
+        }
+        // 产品：从不调用 onActivity，模拟卡在一个永不返回的请求上。
+        await new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        });
+        return { ok: true };
+      },
+    };
+
+    const service = new TeamService({
+      store,
+      runner,
+      supervisor: { name: "主管", role: "supervisor", purpose: "接需求" },
+      pollMs: 5,
+      stallTicks: 10,
+      stallTimeoutMs: 60,
+      turnTimeoutMs: 60_000,
+      maxDurationMs: 0,
+    });
+
+    const result = await service.run({ requirement: "做点事" });
+
+    expect(result.ok).toBe(true);
+    // 卡住的人被置 failed：不会被 readyMembers 自动重排，要恢复必须由上级重新派活。
+    expect(store.memberByName("产品")?.status).toBe("failed");
+  });
+
+  it("看门狗：一直在输出就不判卡住，哪怕总时长超过阈值", async () => {
+    const store = newStore();
+    const runner: TeamTurnRunner = {
+      async run({ member, prompt, onActivity }) {
+        if (member.role === "supervisor") {
+          if (prompt.includes("【result】")) {
+            store.deliver({ fromSessionId: member.sessionId, content: "交付：plan.md" });
+            return { ok: true };
+          }
+          if (!store.memberByName("产品")) {
+            store.createMember({
+              bySessionId: member.sessionId,
+              name: "产品",
+              role: "pm",
+              purpose: "出规划",
+            });
+            store.send({
+              fromSessionId: member.sessionId,
+              to: "产品",
+              kind: "task",
+              content: "写 plan.md",
+              awaitReply: true,
+            });
+          }
+          return { ok: true };
+        }
+        // 产品跑满 240 毫秒，远超 60 毫秒阈值，但每 30 毫秒都有输出。
+        for (let step = 0; step < 8; step += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          onActivity?.();
+        }
+        store.submit({ fromSessionId: member.sessionId, result: "plan.md 已写", state: "done" });
+        return { ok: true };
+      },
+    };
+
+    const service = new TeamService({
+      store,
+      runner,
+      supervisor: { name: "主管", role: "supervisor", purpose: "接需求" },
+      pollMs: 5,
+      stallTicks: 10,
+      stallTimeoutMs: 60,
+      turnTimeoutMs: 60_000,
+      maxDurationMs: 0,
+    });
+
+    const result = await service.run({ requirement: "做点事" });
+
+    expect(result.ok).toBe(true);
+    expect(store.memberByName("产品")?.status).toBe("idle");
+  });
+
+  it("组建期也受看门狗保护：主管一轮无输出会被中止并停下", async () => {
+    const store = newStore();
+    const runner: TeamTurnRunner = {
+      async run({ signal }) {
+        // 组建期主管：从不出声，模拟卡死。
+        await new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        });
+        return { ok: true };
+      },
+    };
+
+    const service = new TeamService({
+      store,
+      runner,
+      supervisor: { name: "主管", role: "supervisor", purpose: "接需求" },
+      pollMs: 5,
+      stallTicks: 10,
+      stallTimeoutMs: 60,
+      turnTimeoutMs: 60_000,
+      maxDurationMs: 0,
+      staffingRounds: 3,
+    });
+
+    const result = await service.staff();
+
+    expect(result.ok).toBe(false);
+    expect(store.memberById(store.memberByName("主管")!.id)?.status).toBe("failed");
   });
 
   it("进程重启后，停在 running 的成员被重新放回可跑并收到一条说明", () => {

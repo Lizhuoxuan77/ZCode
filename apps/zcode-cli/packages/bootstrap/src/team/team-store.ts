@@ -308,9 +308,18 @@ export class TeamStore implements TeamPort {
     return this.waitCount(memberId) > 0;
   }
 
-  /** 终止整次交付时清空租约：留着会让下一次发起误判「还有人在等」。 */
+  /**
+   * 终止整次交付时清空租约：留着会让下一次发起误判「还有人在等」。
+   *
+   * 必须同时把 `waiting` 放回 `idle`：租约没了，`waiting` 就没有依据，而 `readyMembers`
+   * 只选 `idle` —— 只删表的版本会让这些成员永久不可跑（收件箱里有消息也不选），
+   * 同时 `hasWaiting()` 已经是 false，下一次发起在停滞阈值内就判「团队停滞」直接退出。
+   */
   clearWaits(): void {
-    this.db.prepare("DELETE FROM team_wait").run();
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM team_wait").run();
+      this.db.prepare("UPDATE team_member SET status = 'idle' WHERE status = 'waiting'").run();
+    });
   }
 
   hasWaiting(): boolean {
@@ -472,9 +481,12 @@ export class TeamStore implements TeamPort {
         this.settleWait(target.id, from.id);
       }
 
+      // 派活是「救活」的入口：卡住的成员被置 failed 后，上级重新派一个工作包就该恢复可跑。
       if (input.kind === "task" && from.id !== target.id) {
         this.db
-          .prepare("UPDATE team_member SET status = 'idle' WHERE id = ? AND status = 'waiting'")
+          .prepare(
+            "UPDATE team_member SET status = 'idle' WHERE id = ? AND status IN ('waiting', 'failed')",
+          )
           .run(target.id);
       }
 
@@ -609,29 +621,84 @@ export class TeamStore implements TeamPort {
     /** 这一轮里有没有发出过 awaitReply 的消息。 */
     awaitingReply: boolean;
     error?: string;
+    /** 这一轮是「长时间没有任何输出」被看门狗中止的，不是自己跑错。 */
+    stalled?: boolean;
   }): void {
     this.transaction(() => {
+      const endedAt = this.now();
       this.db
         .prepare("UPDATE team_turn SET ended_at = ?, outcome = ?, error = ? WHERE id = ?")
         .run(
-          this.now(),
+          endedAt,
           input.error === undefined ? "ok" : "failed",
           input.error ?? null,
           input.turnId,
         );
       if (input.error !== undefined) {
-        this.enqueue({
-          fromId: input.memberId,
-          toId: input.memberId,
-          kind: "system",
-          content: `[失败] 上一轮执行失败：${input.error}\n换一种做法；重复同样的调用只会再失败一次。`,
-          refs: [],
-        });
+        if (input.stalled === true) {
+          // 卡住不投给自己：自己会被置 failed，叫醒它只会再卡一次。交给上级裁决——
+          // 看它已经产出了什么、缩小范围、换做法或换人，都是上级能做的决定。
+          const member = this.memberById(input.memberId);
+          this.enqueue({
+            fromId: input.memberId,
+            toId: member?.parentId ?? input.memberId,
+            kind: "system",
+            content:
+              `[卡住] ${member?.name ?? input.memberId} 这一轮长时间没有任何输出，已中止并标记为失败。\n` +
+              "不要原样再派一次同一个工作包：先看它已经产出/改动了什么，缩小范围或换一种做法；必要时换人。",
+            refs: [],
+          });
+          // 等它的租约就地清算：[卡住] 已经是答复了，留着只会在租约到期时再补一条 [超时]，
+          // 同一件事说两遍，还会把已经处理完的上级重新拉回等待。
+          const waiters = this.db
+            .prepare("SELECT member_id FROM team_wait WHERE on_member_id = ?")
+            .all(input.memberId) as Array<{ member_id: string }>;
+          this.db.prepare("DELETE FROM team_wait WHERE on_member_id = ?").run(input.memberId);
+          for (const waiter of waiters) {
+            const remaining = this.db
+              .prepare("SELECT COUNT(*) AS n FROM team_wait WHERE member_id = ?")
+              .get(waiter.member_id) as { n: number };
+            if (remaining.n === 0) {
+              this.db
+                .prepare("UPDATE team_member SET status = 'idle' WHERE id = ? AND status = 'waiting'")
+                .run(waiter.member_id);
+            }
+          }
+        } else {
+          // 被系统中止和「自己跑错了」要分开说：前者是外部原因，让它从头再来一遍
+          // 只会把已经写好的文件再写一遍（实测：两轮 29 分钟零产出）。
+          this.enqueue({
+            fromId: input.memberId,
+            toId: input.memberId,
+            kind: "system",
+            content:
+              input.error === "cancelled"
+                ? "[暂停] 这一轮被系统中止，不是你做错了（通常是本次交付到了时间上限或被取消）。\n" +
+                  "已产出/已改动的文件都还在：先看现状，下次发起会接着干，不要从头重做。"
+                : `[失败] 上一轮执行失败：${input.error}\n换一种做法；重复同样的调用只会再失败一次。`,
+            refs: [],
+          });
+        }
+      }
+      // 这一轮结束了，且手上消息都处理完了：等待这个成员的人不必再等到原定 deadline，
+      // 它没回就是没回。把 deadline 拨到现在，watchdog 下一跳就能送达超时。
+      // 「还有未读」必须排除：那说明它马上会被重新叫醒去处理，此刻拨早就是 0 秒假超时。
+      const pendingForMe = this.hasUnconsumed(input.memberId);
+      if (!pendingForMe) {
+        this.db
+          .prepare("UPDATE team_wait SET deadline = ? WHERE on_member_id = ?")
+          .run(endedAt, input.memberId);
       }
       // 挂起的前提是收件箱已经空了：还有没读的消息却去等回复，
       // 那些消息就要等到超时之后才有人处理。
+      // 卡住的成员置 failed：它不会被自动重排（readyMembers 只选 idle），
+      // 要恢复必须由上级重新派活——那才是「换个做法再试」的正确入口。
       const nextStatus: TeamMemberStatus =
-        input.awaitingReply && !this.hasUnconsumed(input.memberId) ? "waiting" : "idle";
+        input.stalled === true
+          ? "failed"
+          : input.awaitingReply && !pendingForMe
+            ? "waiting"
+            : "idle";
       this.db
         .prepare("UPDATE team_member SET status = ? WHERE id = ?")
         .run(nextStatus, input.memberId);
@@ -706,8 +773,13 @@ export class TeamStore implements TeamPort {
   /**
    * 超时是一种**消息**，不是异常分支。等待方收到的是一段可行动的信息
    * （谁没回、等了多久、你可以重试或上报），而不是一个抛出来的错误。
+   *
+   * `turnTimeoutMs` 用来区分「没回复」和「还没跑完」：租约默认 600 秒比单轮上限 900 秒短，
+   * 不区分就是必然发生的假超时——对方正当跑着，等待方却被告知「他 600 秒没回你」，
+   * 转头把人从正常工作里打断去重发一遍。对方还有没结束的 turn 时只顺延，不判超时；
+   * 真正的超时点由 `finishTurn` 拨到对方这一轮结束的那一刻。
    */
-  expireWaits(): number {
+  expireWaits(turnTimeoutMs = 0): number {
     const now = this.now();
     const rows = this.db.prepare("SELECT * FROM team_wait WHERE deadline <= ?").all(now) as Array<{
       member_id: string;
@@ -715,10 +787,31 @@ export class TeamStore implements TeamPort {
       started_at: number;
       deadline: number;
     }>;
+    let expired = 0;
     for (const row of rows) {
       const waiter = this.memberById(row.member_id);
       const other = this.memberById(row.on_member_id);
       if (!waiter || !other) continue;
+      if (turnTimeoutMs > 0) {
+        const active = this.db
+          .prepare(
+            `SELECT started_at FROM team_turn
+             WHERE member_id = ? AND ended_at IS NULL
+             ORDER BY started_at DESC LIMIT 1`,
+          )
+          .get(other.id) as { started_at: number } | undefined;
+        if (active !== undefined) {
+          const latestEnd = active.started_at + turnTimeoutMs;
+          if (latestEnd > now) {
+            // 对方这一轮最晚在 latestEnd 结束，再加 30 秒让它把消息写出来。
+            this.db
+              .prepare("UPDATE team_wait SET deadline = ? WHERE member_id = ? AND on_member_id = ?")
+              .run(latestEnd + 30_000, row.member_id, row.on_member_id);
+            continue;
+          }
+        }
+      }
+      expired += 1;
       const waitedSec = Math.max(1, Math.round((now - row.started_at) / 1000));
       this.transaction(() => {
         this.db
@@ -743,7 +836,7 @@ export class TeamStore implements TeamPort {
         }
       });
     }
-    return rows.length;
+    return expired;
   }
 
   /**

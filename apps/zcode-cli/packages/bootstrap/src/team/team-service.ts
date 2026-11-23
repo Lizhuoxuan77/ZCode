@@ -22,6 +22,11 @@ export interface TeamTurnRunner {
     member: TeamMemberRef;
     prompt: string;
     signal: AbortSignal;
+    /**
+     * 这一轮有任何可观测的输出时调用：模型开始请求、流式吐字、工具开跑/出结果。
+     * 看门狗用它判断「多久没有输出」，而不是用墙钟判断「跑了多久」。
+     */
+    onActivity?: () => void;
   }): Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -32,14 +37,24 @@ export interface TeamServiceOptions {
   concurrency?: number;
   /** 连续多少次「没人可跑也没人在跑」判定为停滞。 */
   stallTicks?: number;
-  /** 整次交付的硬上限，防止一个坏掉的团队把进程占住。 */
+  /**
+   * 整次交付的硬上限，防止一个坏掉的团队把进程占住。**`0` 表示不限**：
+   * 墙钟不是「失控」的判据，正常推进的团队跑几小时是健康的，卡死的团队由停滞检测发现。
+   */
   maxDurationMs?: number;
   /**
    * 单个成员一轮的上限。成员一轮里可能写很多文件，但**不允许无上限**：
-   * 一个卡住的成员会吃掉整个交付预算，让其他成员一直排队（实测：组长一轮跑了 20 分钟，
-   * 而整次交付只有 30 分钟）。到点 abort 这一轮，投一条超时消息，让它自己决定重试还是上报。
+   * 一个卡住的成员会吃掉整次交付的时间，让其他成员一直排队。到点 abort 这一轮，
+   * 投一条超时消息，让它自己决定重试还是上报。
    */
   turnTimeoutMs?: number;
+  /**
+   * 看门狗：一个成员连续多久**没有任何输出**就判定卡住，按超时处理（中止这一轮）。
+   *
+   * 这是「活性」判据，不是时长判据：一直在写文件、一直在跑工具的成员可以跑很久，
+   * 一个 chunk 都没有才是真的卡住。`0` 表示关闭看门狗（只剩 turnTimeoutMs 兜底）。
+   */
+  stallTimeoutMs?: number;
   pollMs?: number;
   logger?: Logger;
   /** 成员的记忆目录（`.zcode/team/memory`）。不给就不启用跨进程记忆。 */
@@ -50,6 +65,15 @@ export interface TeamServiceOptions {
   staffingRounds?: number;
 }
 
+/** 一轮正在跑的执行体：能中止，并且记着它最后一次「有输出」是什么时候。 */
+interface ActiveTurn {
+  controller: AbortController;
+  /** 最后一次观察到输出的时刻。看门狗用它算「静默了多久」。 */
+  lastActivityAt: number;
+  /** 被看门狗判定卡住的时刻；用来把结果说成「卡住」而不是「取消」。 */
+  stalledAt?: number;
+}
+
 export class TeamService {
   private readonly store: TeamStore;
   private readonly runner: TeamTurnRunner;
@@ -57,8 +81,9 @@ export class TeamService {
   private readonly stallTicks: number;
   private readonly maxDurationMs: number;
   private readonly turnTimeoutMs: number;
-  /** 正在跑的轮次，超时/取消时要能逐个中止。 */
-  private readonly activeTurns = new Map<string, AbortController>();
+  private readonly stallTimeoutMs: number;
+  /** 正在跑的轮次，超时 / 取消 / 判卡住时要能逐个中止，并各自记着最后一次输出的时刻。 */
+  private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly pollMs: number;
   private busy = 0;
 
@@ -67,8 +92,9 @@ export class TeamService {
     this.runner = options.runner;
     this.concurrency = Math.max(1, options.concurrency ?? 2);
     this.stallTicks = Math.max(2, options.stallTicks ?? 6);
-    this.maxDurationMs = options.maxDurationMs ?? 30 * 60_000;
-    this.turnTimeoutMs = options.turnTimeoutMs ?? 15 * 60_000;
+    this.maxDurationMs = options.maxDurationMs ?? 2 * 60 * 60_000;
+    this.turnTimeoutMs = options.turnTimeoutMs ?? 30 * 60_000;
+    this.stallTimeoutMs = options.stallTimeoutMs ?? 10 * 60_000;
     this.pollMs = options.pollMs ?? 40;
   }
 
@@ -103,19 +129,13 @@ export class TeamService {
         return { ok: true, summary: delivered };
       }
 
-      if (Date.now() - startedAt > this.maxDurationMs) {
+      if (this.maxDurationMs > 0 && Date.now() - startedAt > this.maxDurationMs) {
         // 只 return 是不够的：在跑的 turn 会继续跑完，并在一个已经没有驱动的团队里派活，
         // 那些工作包就永远停在 open（实测发生过：组长在超时后 2 分钟派出 3 个工作包）。
-        await this.abortRunningTurns(running);
-        return {
-          ok: false,
-          summary:
-            `团队在 ${Math.round(this.maxDurationMs / 60_000)} 分钟内没有收敛，已中止在跑的成员。\n` +
-            `未完成的任务仍在任务板上，再次发起会接着干。\n${this.store.describeStall()}`,
-        };
+        return this.drainAndStop(running);
       }
 
-      this.store.expireWaits();
+      this.store.expireWaits(this.turnTimeoutMs);
 
       const slots = this.concurrency - running.size;
       const ready = slots > 0 ? this.store.readyMembers(slots) : [];
@@ -171,7 +191,16 @@ export class TeamService {
       const delivered = this.store.delivery();
       if (delivered !== undefined) return { ok: true, summary: delivered };
 
-      if (Date.now() - startedAt > this.maxDurationMs) {
+      // 主管被看门狗判卡住：`staff()` 是顺序驱动的，不查状态就会拿它再跑一轮，
+      // 结果只能是再卡一次。停在这里，把现状交给人看。
+      if (this.store.memberById(supervisor.id)?.status === "failed") {
+        return {
+          ok: false,
+          summary: `组建期主管被判定卡住，已停下。\n${this.store.describeStall()}`,
+        };
+      }
+
+      if (this.maxDurationMs > 0 && Date.now() - startedAt > this.maxDurationMs) {
         return {
           ok: false,
           summary:
@@ -259,7 +288,8 @@ export class TeamService {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     outerSignal?.addEventListener("abort", onAbort, { once: true });
-    this.activeTurns.set(member.id, controller);
+    const active: ActiveTurn = { controller, lastActivityAt: Date.now() };
+    this.activeTurns.set(member.id, active);
     let timedOut = false;
     const turnTimer = setTimeout(() => {
       timedOut = true;
@@ -271,6 +301,10 @@ export class TeamService {
       });
       controller.abort();
     }, this.turnTimeoutMs);
+    const stallTimer =
+      this.stallTimeoutMs > 0
+        ? setInterval(() => this.watchStall(member.id, active), this.stallCheckIntervalMs())
+        : undefined;
 
     try {
       const prompt = buildTeamTurnPrompt({
@@ -295,6 +329,9 @@ export class TeamService {
         member: turn.member,
         prompt,
         signal: controller.signal,
+        onActivity: () => {
+          active.lastActivityAt = Date.now();
+        },
       });
       this.recordMemory(turn, outcome);
       this.store.finishTurn({
@@ -304,9 +341,12 @@ export class TeamService {
         ...(outcome.ok
           ? {}
           : {
-              error: timedOut
-                ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先看已经产出/改动了什么，再决定继续、缩小范围或上报，不要从头再来一遍。`
-                : (outcome.error ?? "unknown error"),
+              stalled: active.stalledAt !== undefined,
+              error: active.stalledAt !== undefined
+                ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
+                : timedOut
+                  ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先看已经产出/改动了什么，再决定继续、缩小范围或上报，不要从头再来一遍。`
+                  : (outcome.error ?? "unknown error"),
             }),
       });
     } catch (error) {
@@ -317,22 +357,96 @@ export class TeamService {
         turnId: turn.turnId,
         memberId: member.id,
         awaitingReply: false,
-        error: timedOut
-          ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先检查已产出/已改动的文件，再决定继续、缩小范围或上报，不要从头再来。`
-          : error instanceof Error
-            ? error.message
-            : String(error),
+        stalled: active.stalledAt !== undefined,
+        error: active.stalledAt !== undefined
+          ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
+          : timedOut
+            ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先检查已产出/已改动的文件，再决定继续、缩小范围或上报，不要从头再来。`
+            : error instanceof Error
+              ? error.message
+              : String(error),
       });
     } finally {
       clearTimeout(turnTimer);
+      if (stallTimer !== undefined) clearInterval(stallTimer);
       this.activeTurns.delete(member.id);
       outerSignal?.removeEventListener("abort", onAbort);
     }
   }
 
+  /**
+   * 到了交付硬上限：不再派新活，给在跑的轮次一个收尾窗口。
+   *
+   * 原来的做法是立刻 abort 所有在跑的 turn。代价是每个正在工作的成员都会收到一条
+   * 「失败 cancelled」，下一轮读到自己失败就从零重来——实测一次交付里两个成员各跑了
+   * 近 900 秒，就这样被掐掉，任务板上留下三个 open 任务和三条未读的失败消息。
+   * 软停让快跑完的那一轮正常交还，只有等满宽限期还没收尾的才被中止。
+   */
+  private async drainAndStop(running: Set<Promise<void>>): Promise<TeamStartResult> {
+    this.options.logger?.warn?.("Team delivery reached max duration, draining", {
+      event: "team.delivery.draining",
+      module: "bootstrap.team",
+      running: running.size,
+      maxDurationMs: this.maxDurationMs,
+    });
+    // 宽限期取一个完整的单轮上限：在跑的 turn 本来也会在这么久之内被 turnTimeout 掐掉，
+    // 所以总时长有硬上界，不会因为软停变成无限等待。
+    const drainDeadline = Date.now() + this.turnTimeoutMs;
+    while (running.size > 0 && Date.now() < drainDeadline) {
+      const delivered = this.store.delivery();
+      if (delivered !== undefined) return { ok: true, summary: delivered };
+      this.store.expireWaits(this.turnTimeoutMs);
+      await delay(this.pollMs);
+    }
+    const forced = running.size > 0;
+    if (forced) await this.abortRunningTurns(running);
+    return {
+      ok: false,
+      summary:
+        `团队跑满 ${Math.round(this.maxDurationMs / 60_000)} 分钟，本次交付已暂停（不是失败）。\n` +
+        (forced
+          ? "有成员一轮没能在宽限期内收尾，已被中止。\n"
+          : "在跑的成员都已正常收尾。\n") +
+        "未完成的任务仍在任务板上，再次发起会接着干，不会从头再来。\n" +
+        this.store.describeStall(),
+    };
+  }
+
+  /**
+   * 看门狗：这一轮很久没有任何输出就中止它。
+   *
+   * 判据是**活性**不是时长：一直在写文件、一直在跑工具的成员可以跑很久；一个 chunk 都没有
+   * 才是卡住。卡住之后不自动重试——同一轮再跑一次只会再卡一次，成员会被置为 `failed`，
+   * 由它的上级决定缩小范围、换做法还是换人（见 `TeamStore.finishTurn`）。
+   *
+   * 挂在每一轮自己身上，而不是靠调度主循环扫描：`staff()` 是 `await runOne` 阻塞式的，
+   * 组建期主循环根本没在转，靠主循环的版本在那里一次也不会触发。
+   */
+  private watchStall(memberId: string, active: ActiveTurn): void {
+    if (this.stallTimeoutMs <= 0) return;
+    // 已经判过卡住的不再重复 abort：abort 是幂等的，但重复记日志只会刷屏。
+    if (active.stalledAt !== undefined) return;
+    const quietMs = Date.now() - active.lastActivityAt;
+    if (quietMs < this.stallTimeoutMs) return;
+    active.stalledAt = Date.now();
+    this.options.logger?.warn?.(`Team turn stalled: ${memberId}`, {
+      event: "team.turn.stalled",
+      module: "bootstrap.team",
+      member: memberId,
+      quietMs,
+      stallTimeoutMs: this.stallTimeoutMs,
+    });
+    active.controller.abort();
+  }
+
+  /** 看门狗的检查周期：比阈值密四倍，最少 50 毫秒，最多 5 秒（长阈值不需要高频扫）。 */
+  private stallCheckIntervalMs(): number {
+    return Math.min(5_000, Math.max(50, Math.floor(this.stallTimeoutMs / 4)));
+  }
+
   /** 中止所有在跑的回合，并等它们把状态交还（finishTurn 会把成员放回 idle）。 */
   private async abortRunningTurns(running: Set<Promise<void>>): Promise<void> {
-    for (const controller of this.activeTurns.values()) controller.abort();
+    for (const active of this.activeTurns.values()) active.controller.abort();
     this.activeTurns.clear();
     await Promise.allSettled([...running]);
     // 等待租约在终止后没有意义：留着会让下一次发起误判为「还有人在等」。

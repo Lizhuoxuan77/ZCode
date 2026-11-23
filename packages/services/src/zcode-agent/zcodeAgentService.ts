@@ -223,6 +223,7 @@ import {
 import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./zcodeAgent.js";
 import { readTeamSnapshot, type ZCodeTeamSnapshotParams } from "./teamSnapshot.js";
 import { writeTeamConfig, type ZCodeTeamConfigWriteParams } from "./teamConfigWrite.js";
+import { readTeamMemberMemory, type ZCodeTeamMemberMemoryParams } from "./teamMemory.js";
 import { createContextCompositionClient } from "#src/zcode-agent/contextCompositionClient.js";
 import {
   createPluginHostQueriesClient,
@@ -4919,6 +4920,11 @@ export function createZCodeAgentService(
 
     async writeTeamConfig(params: ZCodeTeamConfigWriteParams) {
       return writeTeamConfig(params);
+    },
+
+    async getTeamMemberMemory(params: ZCodeTeamMemberMemoryParams) {
+      // 只读尾部、不缓存：团队正在跑的时候用户也要能看到记忆刚刚被追加的那一行。
+      return readTeamMemberMemory(params);
     },
 
     async getAppUsageStats(params: ZCodeAgentAppUsageParams) {

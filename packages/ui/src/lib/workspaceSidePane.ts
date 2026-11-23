@@ -207,6 +207,8 @@ export interface SubagentSessionSidePaneTab {
 export interface TeamSidePaneTab {
   id: string;
   type: "team";
+  /** 团队属于 workspace，不属于任何 task；显式写 null 让归属补全逻辑跳过它。 */
+  ownerTaskId?: string | null;
   openedAt?: number;
   workspaceKey: string;
   workspacePath: string;
@@ -820,6 +822,7 @@ export function createTeamSidePaneTab(options: {
   return {
     id: ["team", encodeSidePaneTabIdPart(options.workspaceKey)].join(":"),
     type: "team",
+    ownerTaskId: null,
     openedAt: Date.now(),
     workspaceKey: options.workspaceKey,
     workspacePath: options.workspacePath,
