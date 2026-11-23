@@ -84,5 +84,21 @@ packages/desktop/build/generated/
 
 # 本地 dev-desktop 运行日志（scripts/dev-desktop-env.mjs 落盘，随环境变化）
 .dev-logs/
+# 手动分步启动时落在仓库根的 stdout（tsup / vite / electron / pnpm）
+.dev-desktop.log
+.electron.log
+.tsup.log
+.vite.log
 # 个人工作区文件忽略口径（文件搜索/mention 用），各人按本机需要自建，不入库
 .zcodeignore
+
+# 本地工作笔记（Agent 落盘的过程记录），随本机而变，不入库
+.workbuddy/
+# team-agent/ 是团队功能的 v0.1 独立原型（先行验证调度语义），产品实现已落在
+# contracts/core/bootstrap 的 team 模块中，原型仅作本地归档，不入库
+team-agent/
+# 团队功能的本地开关与运行期状态：team.json 决定本工作区是否启用 StartTeam，
+# team/ 下是 team.db 等运行库。只忽略这两项而非整个 .zcode/，
+# 保留该目录给后续可共享的 workspace 配置
+.zcode/team.json
+.zcode/team/
