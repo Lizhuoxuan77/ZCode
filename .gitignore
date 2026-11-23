@@ -81,3 +81,8 @@ packages/desktop/build/generated/
 
 # JiuwenSwarm runtime file operation logs
 .agent_history/
+
+# 本地 dev-desktop 运行日志（scripts/dev-desktop-env.mjs 落盘，随环境变化）
+.dev-logs/
+# 个人工作区文件忽略口径（文件搜索/mention 用），各人按本机需要自建，不入库
+.zcodeignore
