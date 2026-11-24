@@ -153,9 +153,7 @@ export interface TeamArchitectureLayout {
 
 const EMPTY_LAYOUT: TeamArchitectureLayout = { nodes: [], edges: [], width: 0, height: 0 };
 
-export function layoutTeamArchitecture(
-  members: ZCodeTeamMemberView[],
-): TeamArchitectureLayout {
+export function layoutTeamArchitecture(members: ZCodeTeamMemberView[]): TeamArchitectureLayout {
   if (members.length === 0) return EMPTY_LAYOUT;
 
   const byId = new Map(members.map((member) => [member.id, member]));
@@ -275,7 +273,7 @@ export interface ParsedTeamMemory {
 }
 
 /** 模板自带的说明是写给模型的提示，不是用户的记录，展示出来只会挤占视线。 */
-const TEMPLATE_LINES = ["这个文件只属于你", "可以用编辑工具追加到这里"];
+const TEMPLATE_LINES = ["这个文件只属于你", "可以用编辑工具追加到这里", "用 SaveMemory 追加新要点"];
 
 const ENTRY_PATTERN = /^-\s*\[(\d{2}-\d{2}\s+\d{2}:\d{2})\]\s*(.*)$/;
 

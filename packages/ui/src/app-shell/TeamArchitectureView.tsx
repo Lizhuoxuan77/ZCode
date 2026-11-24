@@ -7,12 +7,7 @@ import type {
 } from "@zcode/services";
 import { ArrowUpRight, PanelRight, RefreshCw, Waypoints, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog.js";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
 import { useServices } from "@/hooks/useServices.js";
 import {
@@ -46,6 +41,8 @@ const MEMORY_ENTRY_LIMIT = 40;
 
 export interface TeamArchitectureViewProps {
   workspacePath: string;
+  /** 远程身份优先于路径；团队数据在用户目录里按它分目录。 */
+  workspaceIdentity?: string;
   open: boolean;
   onClose: () => void;
   /** 切回右侧紧凑面板。 */
@@ -57,13 +54,17 @@ export interface TeamArchitectureViewProps {
 
 export function TeamArchitectureView({
   workspacePath,
+  workspaceIdentity,
   open,
   onClose,
   onOpenCompactPane,
   onCreateTask,
   onOpenSession,
 }: TeamArchitectureViewProps) {
-  const { snapshot, error, now } = useTeamSnapshot(workspacePath, { enabled: open });
+  const { snapshot, error, now } = useTeamSnapshot(workspacePath, {
+    enabled: open,
+    workspaceIdentity,
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [requirement, setRequirement] = useState("");
 
@@ -165,7 +166,10 @@ export function TeamArchitectureView({
                   key={status}
                   className="inline-flex items-center gap-1.5 text-ui-xs text-foreground-subtle"
                 >
-                  <span aria-hidden className={cn("size-1.5 rounded-full", ARCH_STATUS_META[status].dot)} />
+                  <span
+                    aria-hidden
+                    className={cn("size-1.5 rounded-full", ARCH_STATUS_META[status].dot)}
+                  />
                   {ARCH_STATUS_META[status].label}
                 </span>
               ))}
@@ -224,7 +228,9 @@ export function TeamArchitectureView({
                   去创建团队
                 </Button>
               ) : (
-                <div className="text-ui-xs text-foreground-subtlest">在会话里发送 /team 即可开始</div>
+                <div className="text-ui-xs text-foreground-subtlest">
+                  在会话里发送 /team 即可开始
+                </div>
               )}
             </div>
           </div>
@@ -244,101 +250,103 @@ export function TeamArchitectureView({
                   className="relative mx-auto"
                   style={{ width: layout.width, height: layout.height }}
                 >
-                <svg
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0"
-                  width={layout.width}
-                  height={layout.height}
-                >
-                  {layout.edges.map((edge) => {
-                    const touched = neighborsOf.has(edge.fromId) && neighborsOf.has(edge.toId);
-                    const target = members.find((member) => member.id === edge.toId);
-                    const status = target ? resolveMemberStatus(target, tasks) : "idle";
-                    const dim = selectedId !== null && !touched;
+                  <svg
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0"
+                    width={layout.width}
+                    height={layout.height}
+                  >
+                    {layout.edges.map((edge) => {
+                      const touched = neighborsOf.has(edge.fromId) && neighborsOf.has(edge.toId);
+                      const target = members.find((member) => member.id === edge.toId);
+                      const status = target ? resolveMemberStatus(target, tasks) : "idle";
+                      const dim = selectedId !== null && !touched;
+                      return (
+                        <path
+                          key={edge.id}
+                          d={edge.d}
+                          fill="none"
+                          strokeLinecap="round"
+                          stroke={touched ? ARCH_STATUS_META[status].edge : "var(--color-border)"}
+                          strokeWidth={touched ? 1.75 : 1.25}
+                          opacity={dim ? 0.35 : 1}
+                        />
+                      );
+                    })}
+                  </svg>
+
+                  {layout.nodes.map((node) => {
+                    const member = node.member;
+                    const status = resolveMemberStatus(member, tasks);
+                    const meta = ARCH_STATUS_META[status];
+                    const selected = selectedId === member.id;
+                    const dim = selectedId !== null && !neighborsOf.has(member.id);
+                    const action =
+                      status === "running"
+                        ? (member.currentTaskTitle ?? "正在处理任务")
+                        : status === "waiting"
+                          ? "等同事回复"
+                          : status === "failed"
+                            ? "被中断，需要重新调度"
+                            : status === "delivered"
+                              ? `已完成 ${tasks.filter((task) => task.ownerId === member.id && task.state === "done").length} 项`
+                              : "待命";
                     return (
-                      <path
-                        key={edge.id}
-                        d={edge.d}
-                        fill="none"
-                        strokeLinecap="round"
-                        stroke={touched ? ARCH_STATUS_META[status].edge : "var(--color-border)"}
-                        strokeWidth={touched ? 1.75 : 1.25}
-                        opacity={dim ? 0.35 : 1}
-                      />
+                      <button
+                        key={member.id}
+                        type="button"
+                        onClick={() => setSelectedId(selected ? null : member.id)}
+                        aria-pressed={selected}
+                        title={member.purpose}
+                        className={cn(
+                          "absolute flex flex-col rounded-xl border bg-card px-2.5 py-2 text-left transition-[border-color,box-shadow,opacity] duration-150",
+                          selected
+                            ? "border-primary/55 shadow-md"
+                            : "border-border hover:border-border-hover hover:shadow-sm",
+                          status === "running" && meta.glow,
+                          dim && "opacity-70",
+                        )}
+                        style={{
+                          left: node.x,
+                          top: node.y,
+                          width: NODE_WIDTH,
+                          height: NODE_HEIGHT,
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border/70 bg-surface text-ui-xs font-semibold text-foreground-subtle">
+                            {teamRoleInitial(member)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate text-ui-sm font-medium text-foreground">
+                                {member.name}
+                              </span>
+                              <span className="shrink-0 rounded border border-border/70 px-1 text-ui-xs text-foreground-subtlest">
+                                {teamRoleLabel(member.role)}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 block truncate text-ui-xs text-foreground-subtlest">
+                              {member.module
+                                ? `负责 ${shortModuleName(member.module)}`
+                                : "未划分模块"}
+                            </span>
+                          </span>
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              meta.dot,
+                              status === "running" && "animate-pulse",
+                            )}
+                          />
+                        </span>
+                        <span className={cn("mt-auto truncate pt-1 text-ui-xs", meta.text)}>
+                          {action}
+                        </span>
+                      </button>
                     );
                   })}
-                </svg>
-
-                {layout.nodes.map((node) => {
-                  const member = node.member;
-                  const status = resolveMemberStatus(member, tasks);
-                  const meta = ARCH_STATUS_META[status];
-                  const selected = selectedId === member.id;
-                  const dim = selectedId !== null && !neighborsOf.has(member.id);
-                  const action =
-                    status === "running"
-                      ? (member.currentTaskTitle ?? "正在处理任务")
-                      : status === "waiting"
-                        ? "等同事回复"
-                        : status === "failed"
-                          ? "被中断，需要重新调度"
-                          : status === "delivered"
-                            ? `已完成 ${tasks.filter((task) => task.ownerId === member.id && task.state === "done").length} 项`
-                            : "待命";
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      onClick={() => setSelectedId(selected ? null : member.id)}
-                      aria-pressed={selected}
-                      title={member.purpose}
-                      className={cn(
-                        "absolute flex flex-col rounded-xl border bg-card px-2.5 py-2 text-left transition-[border-color,box-shadow,opacity] duration-150",
-                        selected
-                          ? "border-primary/55 shadow-md"
-                          : "border-border hover:border-border-hover hover:shadow-sm",
-                        status === "running" && meta.glow,
-                        dim && "opacity-70",
-                      )}
-                      style={{
-                        left: node.x,
-                        top: node.y,
-                        width: NODE_WIDTH,
-                        height: NODE_HEIGHT,
-                      }}
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border/70 bg-surface text-ui-xs font-semibold text-foreground-subtle">
-                          {teamRoleInitial(member)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-ui-sm font-medium text-foreground">
-                              {member.name}
-                            </span>
-                            <span className="shrink-0 rounded border border-border/70 px-1 text-ui-xs text-foreground-subtlest">
-                              {teamRoleLabel(member.role)}
-                            </span>
-                          </span>
-                          <span className="mt-0.5 block truncate text-ui-xs text-foreground-subtlest">
-                            {member.module ? `负责 ${shortModuleName(member.module)}` : "未划分模块"}
-                          </span>
-                        </span>
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "size-1.5 shrink-0 rounded-full",
-                            meta.dot,
-                            status === "running" && "animate-pulse",
-                          )}
-                        />
-                      </span>
-                      <span className={cn("mt-auto truncate pt-1 text-ui-xs", meta.text)}>
-                        {action}
-                      </span>
-                    </button>
-                  );
-                })}
                 </div>
               </div>
             </div>
@@ -350,6 +358,7 @@ export function TeamArchitectureView({
                   member={selectedMember}
                   tasks={tasks}
                   workspacePath={workspacePath}
+                  workspaceIdentity={workspaceIdentity}
                   now={now}
                   {...(onOpenSession ? { onOpenSession } : {})}
                 />
@@ -399,12 +408,14 @@ function MemberDetail({
   member,
   tasks,
   workspacePath,
+  workspaceIdentity,
   now,
   onOpenSession,
 }: {
   member: ZCodeTeamMemberView;
   tasks: ZCodeTeamTaskView[];
   workspacePath: string;
+  workspaceIdentity?: string;
   now: number;
   onOpenSession?: (sessionId: string) => void;
 }) {
@@ -503,6 +514,7 @@ function MemberDetail({
         <MemberMemory
           key={`${member.id}-memory`}
           workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
           memberName={member.name}
         />
       </div>
@@ -511,14 +523,16 @@ function MemberDetail({
 }
 
 /**
- * 记忆的真身是 `.zcode/team/memory/<名字>.md`。
+ * 记忆的真身是 ZCode 用户数据目录里 `teams/<slug>-<hash>/memory/<名字>.md`。
  * 选中时读一次，之后 5 秒刷一次：团队正在跑的时候，用户要能看到「它把我说的记下来了」。
  */
 function MemberMemory({
   workspacePath,
+  workspaceIdentity,
   memberName,
 }: {
   workspacePath: string;
+  workspaceIdentity?: string;
   memberName: string;
 }) {
   const { zcodeAgentService } = useServices();
@@ -527,14 +541,18 @@ function MemberMemory({
 
   const load = useCallback(async () => {
     try {
-      const next = await zcodeAgentService.getTeamMemberMemory({ workspacePath, memberName });
+      const next = await zcodeAgentService.getTeamMemberMemory({
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        memberName,
+      });
       setMemory(next);
     } catch {
       // 读不到就保持上一次的样子：记忆是上下文，不是事实源。
     } finally {
       setLoading(false);
     }
-  }, [memberName, workspacePath, zcodeAgentService]);
+  }, [memberName, workspaceIdentity, workspacePath, zcodeAgentService]);
 
   useEffect(() => {
     let alive = true;
@@ -587,7 +605,7 @@ function MemberMemory({
         </div>
       ) : !memory?.exists ? (
         <div className="mt-2 rounded-lg border border-dashed border-border px-2.5 py-2 text-ui-xs leading-relaxed text-foreground-subtlest">
-          它还没写过记忆。第一次被唤醒之后，每轮结束都会自动追加一行「收到什么 → 结果」。
+          它还没写过记忆。任务过程中它可以把要点记进长期记忆，下一次被唤醒时会作为背景资料读到。
         </div>
       ) : parsed.entries.length === 0 && parsed.notes.length === 0 ? (
         <div className="mt-2 text-ui-xs text-foreground-subtlest">记忆文件是空的</div>

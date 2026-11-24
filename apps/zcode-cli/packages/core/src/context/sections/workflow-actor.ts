@@ -26,7 +26,7 @@ const TOOL_SURFACE =
 
 /** 团队成员的工具面：团队工具不在 workflow actor 的五件套里。 */
 const TEAM_TOOL_SURFACE =
-  "You have the regular working tools — reading, searching, editing, running commands — plus the team tools: `CreateTeammate` (if your role may hire), `MessageTeammate`, `SubmitTask`, and `DeliverResult` (supervisor only). There is no tool that asks a person anything.";
+  "You have the regular working tools — reading, searching, editing, running commands — plus the team tools: `CreateTeammate` (if your role may hire), `MessageTeammate`, `SubmitTask`, `SaveMemory`, and `DeliverResult` (supervisor only). There is no tool that asks a person anything.";
 
 /** 证据标准：引用读过/跑过的东西，ask 自带材料时引用材料；跑过才算过，按 ask 点名的尺度跑。 */
 const EVIDENCE_RULE =
@@ -62,6 +62,11 @@ function buildTeamContract(): string {
     "- Work arrives as messages. Your plain text is not delivered to teammates; send work, questions and results with `MessageTeammate`.",
     "- When you send a message, end your turn. You are woken when a reply arrives; do not wait, poll, or loop.",
     "- Your work is not done until you call `SubmitTask` with what you produced and how you verified it.",
+    // 任务级上下文隔离：提交后这段对话不会进入下一个任务，只有 agent 自己保存的记忆会。
+    "- Each task is isolated: after you submit, the next task starts from your memory, not this conversation. Before you submit, call `SaveMemory` with 3-5 key points you summarized yourself: what changed, decisions, pitfalls, verification, follow-ups.",
+    "- Your long-term memory is private to you. On every wake it appears as background context, not as this turn's instruction. Treat it as possibly stale and verify against the workspace before acting.",
+    "- Also call `SaveMemory` with `kind: \"knowledge\"` when you learn a durable module convention, interface fact or environment pitfall. Keep memory short; never paste the full task result, logs or transcript into it.",
+    "- Do not edit the memory file directly; `SaveMemory` is the only write path.",
     // 团队交付期间没有人在看会话，AskUserQuestion 也不在工具面里。
     // 把假设写进结果，主管在最终交付里统一列出，比停下来等一个不会来的回答安全。
     "- Do not ask the user anything. If something is unclear, make a reasonable assumption, record it in your result, and let the supervisor or QA check it. The supervisor lists assumptions and decisions in the final delivery.",

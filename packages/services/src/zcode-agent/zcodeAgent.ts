@@ -738,13 +738,14 @@ export interface IZCodeAgentService {
     params: ZCodeAgentListSessionSubagentsParams,
   ): Promise<ZCodeSessionSubagentsResult>;
   /**
-   * 团队面板的只读投影。直接读该 workspace 的 `.zcode/team/team.db`，
+   * 团队面板的只读投影。直接读 ZCode 用户数据目录里该 workspace 的团队库，
    * 不经过 agent 进程：agent 正在跑的时候界面也要能看，读走 WAL 并发路径。
    */
   getTeamSnapshot(params: ZCodeTeamSnapshotParams): Promise<ZCodeTeamSnapshot>;
   /**
-   * 面板里「创建团队」：按名字生成 `.zcode/team.json`。已存在时不覆盖，
+   * 面板里「创建团队」：在用户数据目录按名字生成团队配置。已存在时不覆盖，
    * 由调用方根据 created 决定提示语。写入后配置读取会自动生效，无需重启会话。
+   * 远程工作区不支持：团队数据只保存在本机用户目录。
    */
   writeTeamConfig(params: ZCodeTeamConfigWriteParams): Promise<ZCodeTeamConfigWriteResult>;
   /**

@@ -52,6 +52,7 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "incoming_message",
   "memory_update",
   "relevant_memory",
+  "team_memory",
   "runtime_mode",
   "plan_mode_exit",
   "output_style",
@@ -91,6 +92,9 @@ const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
   "target_continuation",
   "tool_result_warning",
   "goal_completion_verification",
+  // 团队成员记忆是背景资料，不是本轮任务；留在 user 侧、排在当前问题之前，
+  // 避免被 MCS 提升成一条排在任务之后的 system 指令。
+  "team_memory",
 ]);
 
 const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape> = {
@@ -127,6 +131,8 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   hook_context: descriptor("current_turn", "resume_history", true, "sr.hook_context"),
   memory_update: descriptor("current_turn", "per_current_turn", true, "sr.memory_update"),
   relevant_memory: descriptor("current_turn", "per_current_turn", true, "sr.relevant_memory"),
+  // 团队成员自己的长期记忆：每轮从文件读入，作为背景资料注入；只对模型可见，不落库。
+  team_memory: descriptor("current_turn", "per_current_turn", true, "sr.team_memory"),
   runtime_mode: descriptor("current_turn", "per_current_turn", true, "sr.runtime_mode"),
   plan_mode_exit: descriptor("current_turn", "runtime_local", true, "sr.plan_mode_exit"),
   output_style: descriptor("current_turn", "per_current_turn", true, "sr.output_style"),

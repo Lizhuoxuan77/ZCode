@@ -1570,6 +1570,10 @@ describe("context builder — workflow actor identity", () => {
     expect(text).toContain("`SubmitTask`");
     expect(text).toContain("`DeliverResult`");
     expect(text).toContain("There is no tool that asks a person anything.");
+    expect(text).toContain("Each task is isolated");
+    expect(text).toContain("`SaveMemory`");
+    expect(text).toContain("background context, not as this turn's instruction");
+    expect(text).not.toContain("记忆要点");
 
     // 团队成员没有 submit_result / escalate；工作流契约不得漏进来。
     expect(text).not.toContain("`submit_result`");

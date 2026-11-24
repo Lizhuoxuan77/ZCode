@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { expandCustomCommandPrompt, type CustomCommandContent } from "@zcode/contracts";
 import {
   BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES,
@@ -17,7 +16,7 @@ import {
  * 早先只有「交付」一种，导致团队是临阵招人：招谁取决于这一票活长什么样，
  * 项目本身没有稳定的组织结构。用户的期望是反过来的——团队是项目的常设组织。
  *
- * workspace 没有 `.zcode/team.json` 时不静默失败，而是把「怎么开」讲清楚。
+ * workspace 还没有团队配置时不静默失败，而是把「怎么开」讲清楚。
  */
 
 export const BUILTIN_TEAM_COMMAND_NAME = "team";
@@ -65,25 +64,18 @@ export const BUILTIN_TEAM_COMMAND: CustomCommandContent = {
   truncated: false,
 };
 
-const TEAM_CONFIG_RELATIVE_PATH = join(".zcode", "team.json");
-
-export function isTeamConfigured(workingDirectory: string): boolean {
-  return existsSync(join(workingDirectory, TEAM_CONFIG_RELATIVE_PATH));
+export function isTeamConfigured(teamConfigPath: string): boolean {
+  return existsSync(teamConfigPath);
 }
 
 const DISABLED_BODY = [
-  "This workspace has no team yet: `.zcode/team.json` does not exist, so `StartTeam` has nothing",
-  "to run. Calling it would only return an error.",
+  "This workspace has no team yet, so `StartTeam` has nothing to run.",
+  "Calling it would only return an error.",
   "",
   "Tell the user, in their language, exactly this:",
-  "1. 打开右侧侧栏的「团队」面板，点「创建团队」起一个名字（它会写 `.zcode/team.json`）；",
-  "2. 或者手动在项目根目录建 `.zcode/team.json`，最小配置：",
-  "",
-  "```json",
-  '{ "name": "交付小组", "supervisor": { "name": "主管" }, "concurrency": 2 }',
-  "```",
-  "",
-  "3. 建好之后不需要重启：`/team` 会立刻生效，第一条不带参数就是组建团队。",
+  "1. 打开右侧侧栏的「团队」面板，点「创建团队」起一个名字。团队配置保存在 ZCode 的用户数据目录，",
+  "   不会写进项目，因此不需要（也不应该）在项目里手动创建配置文件。",
+  "2. 建好之后不需要重启：`/team` 会立刻生效，第一条不带参数就是组建团队。",
   "",
   "Then stop. Do not attempt the requested task yourself unless the user asks separately.",
 ].join("\n");

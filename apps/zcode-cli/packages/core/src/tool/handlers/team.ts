@@ -14,6 +14,7 @@ import {
   TEAM_CREATE_MEMBER_TOOL_NAME,
   TEAM_DELIVER_TOOL_NAME,
   TEAM_MESSAGE_TOOL_NAME,
+  TEAM_SAVE_MEMORY_TOOL_NAME,
   TEAM_START_TOOL_NAME,
   TEAM_SUBMIT_TOOL_NAME,
   TeamCreateMemberInputJsonSchema,
@@ -23,6 +24,8 @@ import {
   TeamFlowError,
   TeamMessageInputJsonSchema,
   TeamMessageInputSchema,
+  TeamSaveMemoryInputJsonSchema,
+  TeamSaveMemoryInputSchema,
   TeamStartInputJsonSchema,
   TeamStartInputSchema,
   TeamSubmitInputJsonSchema,
@@ -31,6 +34,7 @@ import {
   type TeamCreateMemberInput,
   type TeamDeliverInput,
   type TeamMessageInput,
+  type TeamSaveMemoryInput,
   type TeamStartInput,
   type TeamSubmitInput,
   type ToolPermissionPatternSource,
@@ -237,10 +241,36 @@ const submitHandler: ToolHandler = async (input, context) => {
   return {
     message:
       parsed.state === "done"
-        ? `已提交「${task.title}」。等验收，不要重复提交。`
-        : `已标记失败：「${task.title}」。上级会看到原因。`,
+        ? `已提交「${task.title}」。等验收，不要重复提交。若还没有记录本次任务的要点，先用 SaveMemory 写 3–5 条。`
+        : `已标记失败：「${task.title}」。上级会看到原因。若这次失败有值得记住的坑，用 SaveMemory 记下来。`,
     taskId: submitted.id,
     state: submitted.state,
+  };
+};
+
+const saveMemoryHandler: ToolHandler = async (input, context) => {
+  const parsed = TeamSaveMemoryInputSchema.parse(input) as TeamSaveMemoryInput;
+  const content = parsed.content.trim();
+  if (content.length === 0) return fail("记忆内容不能为空。");
+  const { port } = requireTeamMember(context, TEAM_SAVE_MEMORY_TOOL_NAME);
+  const saveMemory = port.saveMemory;
+  if (!saveMemory) {
+    return fail("当前端口不支持保存记忆。先把要点留在提交结果里，交给上级处理。");
+  }
+
+  guard(() =>
+    saveMemory({
+      fromSessionId: context.sessionId,
+      kind: parsed.kind,
+      content,
+    }),
+  );
+
+  const label = parsed.kind === "task" ? "任务要点" : "模块知识";
+  return {
+    message: `已记住（${label}）。下一轮叫醒时它会作为背景资料出现，不需要你复述。`,
+    kind: parsed.kind,
+    chars: content.length,
   };
 };
 
@@ -417,6 +447,10 @@ export const teamSubmitToolEntry: ToolEntry = {
       "Submits the work you own. Nothing downstream moves until you call this — the person who assigned it is waiting on exactly this signal.",
       "",
       "`result` must say what you produced, where it is, and how it was verified. 'Done' without evidence will be rejected by whoever checks it.",
+      "",
+      "Before you submit, call `SaveMemory` with 3-5 key points you summarized yourself: what changed, decisions, pitfalls, verification, follow-ups. That memory is private to you and appears as background context on later wakes; the next task starts from it, not from this conversation.",
+      "",
+      "Do not paste the full result or transcript into `SaveMemory`; it is a short index, not an archive.",
     ].join("\n"),
     readOnly: false,
     destructive: false,
@@ -438,6 +472,46 @@ export const teamSubmitToolEntry: ToolEntry = {
   trace: TEAM_TRACE,
 };
 
+export const teamSaveMemoryToolEntry: ToolEntry = {
+  capability: "Save a short note into the member's own long-term memory",
+  metadata: {
+    name: TEAM_SAVE_MEMORY_TOOL_NAME,
+    searchHint: "remember memory note summary save knowledge",
+    description: [
+      "# SaveMemory",
+      "",
+      "Saves a short note into your own long-term memory. It is private to you: teammates never see it.",
+      "",
+      "Call it before you submit a task, with 3-5 key points you summarized yourself: what changed, decisions, pitfalls, verification, follow-ups. Call it when you learn a durable module convention, interface fact or environment pitfall.",
+      "",
+      "Memory appears as background context on later wakes. Treat it as possibly stale and verify against the workspace before acting. Do not paste full task results, logs or transcripts, and do not edit the memory file directly.",
+      "",
+      "`kind`: `task` (default) = this task's key points; `knowledge` = reusable module, interface or environment knowledge.",
+    ].join("\n"),
+    readOnly: false,
+    destructive: false,
+    concurrentSafe: false,
+    maxOutputBytes: 4_000,
+    sideEffectScope: "session",
+    riskLevel: "low",
+    needsApproval: false,
+  },
+  handler: saveMemoryHandler,
+  formatModelContent: formatTeamModelContent,
+  inputSchema: TeamSaveMemoryInputJsonSchema,
+  outputSchema: TEAM_OUTPUT_SCHEMA,
+  runtimeInputSchema: TeamSaveMemoryInputSchema,
+  permission: {
+    permission: "team.save_memory",
+    reason: "saves the member's own memory",
+    ...COMMON_PERMISSION,
+  },
+  resultBudget: TEAM_BUDGET,
+  timeout: TEAM_TIMEOUT,
+  cancellation: TEAM_CANCELLATION,
+  trace: TEAM_TRACE,
+};
+
 export const teamDeliverToolEntry: ToolEntry = {
   capability: "Deliver the team's final result to the user",
   metadata: {
@@ -449,6 +523,8 @@ export const teamDeliverToolEntry: ToolEntry = {
       "Supervisor only. Ends this team delivery and shows the text to the user.",
       "",
       "End with a short section listing the decisions you made on the user's behalf and what you assumed. The user was not watching every step; that section is how they audit you.",
+      "",
+      "Before delivering, call `SaveMemory` if this delivery leaves decisions or handoff points that future-you needs on the next requirement.",
     ].join("\n"),
     readOnly: false,
     destructive: false,
@@ -520,6 +596,7 @@ export const teamToolEntries: readonly ToolEntry[] = [
   teamCreateMemberToolEntry,
   teamMessageToolEntry,
   teamSubmitToolEntry,
+  teamSaveMemoryToolEntry,
   teamDeliverToolEntry,
 ];
 

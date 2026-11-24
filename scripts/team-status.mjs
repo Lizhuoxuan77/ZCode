@@ -5,19 +5,24 @@
 // 而团队状态本身已经能从 team.db 读出来了。这个脚本让「看不见团队」这件事先有个兜底，
 // 也顺便当面板的数据通路验收工具——面板显示不对时，先跑它看数据对不对。
 //
-// 用法：node scripts/team-status.mjs [workspacePath]
+// 用法：node scripts/team-status.mjs [workspacePath] [workspaceIdentity]
 
 import { readTeamSnapshot } from "../packages/services/dist/zcode-agent/teamSnapshot.js";
 
 const workspacePath = process.argv[2] ?? process.cwd();
-const snapshot = readTeamSnapshot({ workspacePath, messageLimit: 12 });
+const workspaceIdentity = process.argv[3];
+const snapshot = readTeamSnapshot({
+  workspacePath,
+  ...(workspaceIdentity ? { workspaceIdentity } : {}),
+  messageLimit: 12,
+});
 
 if (!snapshot.configured) {
-  console.log(`团队未启用：${workspacePath} 下没有 .zcode/team.json`);
+  console.log(`团队未启用：该工作区还没有团队配置（团队数据保存在 ZCode 用户目录，不在项目里）。`);
   process.exit(0);
 }
 if (!snapshot.started) {
-  console.log("团队已启用，但还没跑过任务（没有 team.db）。用 /team <需求> 发起一次。");
+  console.log("团队已启用，但还没跑过任务（没有团队数据库）。用 /team <需求> 发起一次。");
   process.exit(0);
 }
 

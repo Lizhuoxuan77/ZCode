@@ -21,6 +21,11 @@ export interface ResolveZCodeBuiltinPromptCommandOptions {
    */
   dynamicWorkflowEnabled?: boolean;
   workingDirectory?: string;
+  /**
+   * 团队配置在用户数据目录里的绝对路径。团队不再写进项目，所以不能用 workingDirectory 拼。
+   * 缺席时按「没有团队」处理，只给引导面板的说明。
+   */
+  teamConfigPath?: string;
 }
 
 export interface ResolvedZCodeBuiltinPromptCommand {
@@ -69,10 +74,11 @@ export function resolveZCodeBuiltinPromptCommandInvocation(
 
   if (invocation.name === BUILTIN_TEAM_COMMAND_NAME) {
     // 没有配置时不吞掉命令：返回一段「怎么开」的正文，比让模型对着不存在的工具瞎试好。
+    const teamConfigPath = options.teamConfigPath;
     return {
       name: BUILTIN_TEAM_COMMAND_NAME,
       prompt: expandBuiltinTeamCommandPrompt(invocation.args, {
-        enabled: isTeamConfigured(options.workingDirectory ?? process.cwd()),
+        enabled: teamConfigPath !== undefined && isTeamConfigured(teamConfigPath),
       }),
     };
   }

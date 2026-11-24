@@ -3248,6 +3248,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       {isWebRemoteControlShell ? renderRemoteShell(wideContent) : wideContent}
       <TeamArchitectureView
         workspacePath={workspaceAbsPath}
+        workspaceIdentity={workspaceIdentity}
         open={isTeamArchitectureOpen}
         onClose={handleCloseTeamArchitecture}
         onOpenCompactPane={() =>

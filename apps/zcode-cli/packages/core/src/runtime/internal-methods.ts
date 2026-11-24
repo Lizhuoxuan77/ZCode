@@ -73,6 +73,11 @@ export interface AgentRuntimeCoreMethods {
     patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
   ): void;
   updateWorkflowActor(actor: AgentRuntimeConfig["workflowActor"]): void;
+  resetConversationToContextPrefix(options?: {
+    model?: Model;
+  }): { ok: true } | { ok: false; reason: "busy" | "locked" };
+  /** 用成员自己的长期记忆替换模型上下文里的 team_memory 背景条目。 */
+  setTeamMemoryContext(input: { text: string }): { ok: true } | { ok: false; reason: "busy" };
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

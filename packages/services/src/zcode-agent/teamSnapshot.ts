@@ -1,7 +1,8 @@
 // ============================================================
 // Team snapshot — 给界面看的只读投影
 // ============================================================
-// 团队状态写在 `<workspace>/.zcode/team/team.db`（agent 进程独占写）。渲染进程读不到它，
+// 团队状态写在 ZCode 用户数据目录（默认 `.zcode/cli/teams/<slug>-<hash>/team.db`，
+// agent 进程独占写），不再写进用户项目。渲染进程读不到它，
 // 所以这里提供一个**纯读**投影：一次打开、几条 SELECT、立刻关掉。
 //
 // 三条约束：
@@ -10,12 +11,13 @@
 //   3. **不缓存**。轮询就是轮询：每个请求都读盘，避免界面看到一份过期快照还以为是实时。
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { TeamRole } from "@zcode/contracts";
+import { isRemoteTeamWorkspace, resolveDesktopTeamStorage } from "./teamStorage.js";
 
 export interface ZCodeTeamSnapshotParams {
   workspacePath: string;
+  /** 远程身份优先于路径；用于定位同一个工作区的团队数据。 */
+  workspaceIdentity?: string;
   /** 消息流保留条数，默认 60。界面折叠着看够用。 */
   messageLimit?: number;
 }
@@ -23,7 +25,8 @@ export interface ZCodeTeamSnapshotParams {
 export interface ZCodeTeamMemberView {
   id: string;
   name: string;
-  role: TeamRole;
+  /** 角色名直接来自 team.db；界面按字符串兜底，不反向依赖 CLI 的团队契约类型。 */
+  role: string;
   status: string;
   depth: number;
   parentId: string | null;
@@ -63,7 +66,7 @@ export interface ZCodeTeamMessageView {
 }
 
 export interface ZCodeTeamSnapshot {
-  /** workspace 里有没有 `.zcode/team.json`——决定团队功能是否开启。 */
+  /** 用户数据目录里有没有团队配置——决定团队功能是否开启。 */
   configured: boolean;
   /** 配置里写的团队名。界面用来标身份，缺失时退回「团队」。 */
   teamName?: string;
@@ -137,11 +140,13 @@ function readTeamName(configPath: string): string | undefined {
 }
 
 export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnapshot {
-  const root = params.workspacePath;
-  const configPath = join(root, ".zcode", "team.json");
+  // 远程工作区的团队数据在远端机器的用户目录里，桌面端读不到，也不该在这里假装读过。
+  if (isRemoteTeamWorkspace(params)) return EMPTY(false);
+  const storage = resolveDesktopTeamStorage(params);
+  const configPath = storage.configPath;
   const configured = existsSync(configPath);
   const teamName = readTeamName(configPath);
-  const dbPath = join(root, ".zcode", "team", "team.db");
+  const dbPath = storage.databasePath;
   if (!existsSync(dbPath)) return { ...EMPTY(configured), ...(teamName ? { teamName } : {}) };
 
   const limit = Math.min(Math.max(params.messageLimit ?? 60, 1), 500);
@@ -189,7 +194,7 @@ export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnap
       members: members.map((member) => ({
         id: member.id,
         name: member.name,
-        role: member.role as TeamRole,
+        role: member.role,
         status: member.status,
         depth: member.depth,
         parentId: member.parent_id,

@@ -41,6 +41,9 @@ export type TeamMemberStatus = "idle" | "running" | "waiting" | "failed" | "arch
 /** 消息种类。reject 是下游退回上游的产出，与 error 不同：被退回的任务仍然 open。 */
 export type TeamMessageKind = "task" | "result" | "question" | "answer" | "system" | "reject";
 
+/** 成员自己保存的长期记忆类型。task = 任务要点；knowledge = 模块约定/接口事实/踩坑。 */
+export type TeamMemoryKind = "task" | "knowledge";
+
 /** 任务单状态。与成员状态分开：这是唯一能收敛的维度。 */
 export type TeamTaskState = "open" | "done" | "failed";
 
@@ -126,6 +129,17 @@ export interface TeamSubmitRequest {
   state: Exclude<TeamTaskState, "open">;
 }
 
+/**
+ * 成员保存自己的长期记忆。身份只来自 fromSessionId：模型不能指定别人的名字，
+ * 也就不能越权往同事的记忆里写东西。
+ */
+export interface TeamSaveMemoryRequest {
+  fromSessionId: SessionId;
+  kind: TeamMemoryKind;
+  /** agent 自己总结的 3–5 条要点，不是任务全文。 */
+  content: string;
+}
+
 export interface TeamLimits {  /** 全队人数上限（含主管）。 */
   maxMembers: number;
   /** 组织树最大深度。主管 depth=0。 */
@@ -162,6 +176,11 @@ export interface TeamPort {
   updateMember?(input: TeamUpdateMemberRequest): TeamMemberRef;
   send(input: TeamSendMessageRequest): TeamMessageRef;
   submit(input: TeamSubmitRequest): TeamTaskRef;
+  /**
+   * 成员把自己总结的要点写进自己的长期记忆。可选方法沿用 updateMember? 的模式：
+   * 不支持记忆的端口由工具层返回可读失败，而不是让模型以为已经保存。
+   */
+  saveMemory?(input: TeamSaveMemoryRequest): void;
   /** 只有主管能交付：写进主会话，并收尾根任务（否则调度器会认为还有活没人干）。 */
   deliver(input: { fromSessionId: SessionId; content: string }): void;
   /**

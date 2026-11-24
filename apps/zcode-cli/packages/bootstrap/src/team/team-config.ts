@@ -1,18 +1,15 @@
 // ============================================================
-// Team Config — 项目里的团队声明
+// Team Config — ZCode 用户目录里的团队声明
 // ============================================================
 // 团队属于 workspace，不属于某次会话：同一个项目的多个窗口共享同一批人，
-// 切换 workspace 等于换团队。所以配置和状态都在项目的 `.zcode/` 下。
+// 切换 workspace 等于换团队。但配置和状态**不写在用户项目里**——它们属于本机运行数据，
+// 统一放在 ZCode 用户数据目录（按工作区身份分目录）。
 //
-// `.zcode/team.json` 是**唯一开关**：没有这个文件，团队工具根本不注册，
+// `team.json` 是**唯一开关**：没有这个文件，团队工具就不会真正接活，
 // 老用户感觉不到任何变化。
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { DEFAULT_TEAM_LIMITS, type TeamLimits } from "@zcode/contracts";
-
-export const TEAM_CONFIG_RELATIVE_PATH = join(".zcode", "team.json");
-export const TEAM_DB_RELATIVE_PATH = join(".zcode", "team", "team.db");
 
 export interface TeamConfig {
   /** 团队名，用于日志与会话标题。 */
@@ -59,12 +56,11 @@ function nonNegativeInt(value: unknown, fallback: number): number {
 }
 
 /** 缺字段就用默认值，坏文件当没有——团队功能不该因为一个逗号让整个会话起不来。 */
-export function loadTeamConfig(workingDirectory: string): TeamConfig | undefined {
-  const path = join(workingDirectory, TEAM_CONFIG_RELATIVE_PATH);
-  if (!existsSync(path)) return undefined;
+export function loadTeamConfig(configPath: string): TeamConfig | undefined {
+  if (!existsSync(configPath)) return undefined;
   let raw: RawConfig;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as RawConfig;
+    raw = JSON.parse(readFileSync(configPath, "utf8")) as RawConfig;
   } catch {
     return undefined;
   }
@@ -100,10 +96,4 @@ export function loadTeamConfig(workingDirectory: string): TeamConfig | undefined
     // 而真正的死锁（等一个永不返回的请求）也在这个量级上暴露出来。
     stallTimeoutMs: nonNegativeInt(raw.stallTimeoutMs, 10 * 60_000),
   };
-}
-
-export function teamDatabasePath(workingDirectory: string): string {
-  const path = join(workingDirectory, TEAM_DB_RELATIVE_PATH);
-  mkdirSync(dirname(path), { recursive: true });
-  return path;
 }

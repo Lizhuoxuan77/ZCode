@@ -524,6 +524,15 @@ export interface AgentRuntime {
   ): void;
   /** 替换子代理/团队成员的身份段（system prompt），不重建 runtime。 */
   updateWorkflowActor(actor: AgentRuntimeConfig["workflowActor"]): void;
+  /** 回到 context prefix，丢掉当前对话；保留 session transcript 与消息 id。 */
+  resetConversationToContextPrefix(options?: {
+    model?: Model;
+  }): { ok: true } | { ok: false; reason: "busy" | "locked" };
+  /**
+   * 把团队成员自己的长期记忆作为背景资料放进模型上下文；不进入用户 query，也不持久化。
+   * 同一来源只保留一份，内容变化时原地替换。
+   */
+  setTeamMemoryContext(input: { text: string }): { ok: true } | { ok: false; reason: "busy" };
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

@@ -42,6 +42,16 @@ export {
   migrateSubagentStateFile,
 } from "./node/subagentMarkdownMigration.js";
 export {
+  resolveTeamStoragePaths,
+  resolveLegacyTeamWorkspacePaths,
+  TEAM_CONFIG_FILE_NAME,
+  TEAM_DATABASE_FILE_NAME,
+  TEAM_MEMORY_DIRECTORY_NAME,
+  type TeamStoragePaths,
+  type TeamStoragePathsInput,
+  type LegacyTeamWorkspacePaths,
+} from "./node/teamStorage.js";
+export {
   atomicWritePrivateTextFile,
   backupCorruptFile,
   withFileLock,

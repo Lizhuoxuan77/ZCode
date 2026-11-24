@@ -13,7 +13,7 @@
 
 import { buildTeamTurnPrompt } from "@zcode/core";
 import type { Logger, TeamMemberRef, TeamRole, TeamStartResult } from "@zcode/contracts";
-import { appendMemberMemory, oneLine, readMemberMemory } from "./team-memory.js";
+import { formatMemoryContext, readMemberMemory } from "./team-memory.js";
 import { TeamStore, type ClaimedTurn } from "./team-store.js";
 
 export interface TeamTurnRunner {
@@ -27,7 +27,19 @@ export interface TeamTurnRunner {
      * 看门狗用它判断「多久没有输出」，而不是用墙钟判断「跑了多久」。
      */
     onActivity?: () => void;
-  }): Promise<{ ok: boolean; error?: string }>;
+    /**
+     * 成员自己的长期记忆，作为背景资料交给 runtime；它不进 prompt，
+     * 由 runner 作为 system-reminder 注入模型上下文。
+     */
+    backgroundContext?: string;
+    /** 上一个任务范围已关闭，且这一轮有新任务：先清空模型上下文再跑。 */
+    freshContext?: boolean;
+  }): Promise<{
+    ok: boolean;
+    error?: string;
+    /** freshContext 时运行时是否真的完成了上下文重置。 */
+    contextReset?: "applied" | "skipped";
+  }>;
 }
 
 export interface TeamServiceOptions {
@@ -57,7 +69,10 @@ export interface TeamServiceOptions {
   stallTimeoutMs?: number;
   pollMs?: number;
   logger?: Logger;
-  /** 成员的记忆目录（`.zcode/team/memory`）。不给就不启用跨进程记忆。 */
+  /**
+   * 成员的记忆目录（用户数据目录里的 `teams/<slug>-<hash>/memory`）。
+   * 调度器只在这里读取记忆、生成背景资料；写入由 agent 的 SaveMemory 工具负责。
+   */
   memoryDir?: string;
   /** 项目名，写进组建期的目标里，让主管知道自己是在给谁配人。 */
   projectName?: string;
@@ -104,6 +119,8 @@ export class TeamService {
    */
   async run(input: { requirement: string; signal?: AbortSignal }): Promise<TeamStartResult> {
     const supervisor = this.ensureSupervisor();
+    // 崩溃恢复只负责把成员从 running 放回 idle、按认领快照补 pending_fresh；
+    // 记忆由 agent 自己通过 SaveMemory 写，不再由调度器补摘要。
     const recovered = this.store.recoverDanglingTurns();
     if (recovered > 0) {
       this.options.logger?.warn?.("Team resumed after an unclean exit", {
@@ -117,7 +134,8 @@ export class TeamService {
 
     const startedAt = Date.now();
     let idleTicks = 0;
-    const running = new Set<Promise<void>>();
+    /** memberId → 在跑的 turn；交付时要等主管那一轮把 finishTurn/任务摘要写完。 */
+    const running = new Map<string, Promise<void>>();
 
     while (true) {
       if (input.signal?.aborted === true) {
@@ -126,13 +144,17 @@ export class TeamService {
 
       const delivered = this.store.delivery();
       if (delivered !== undefined) {
+        // deliver() 在主管 turn 内写 meta；如果直接返回，finishTurn 和
+        // pending_fresh 可能还在跑。先等主管这一轮交还。
+        const supervisorTurn = running.get(supervisor.id);
+        if (supervisorTurn !== undefined) await supervisorTurn;
         return { ok: true, summary: delivered };
       }
 
       if (this.maxDurationMs > 0 && Date.now() - startedAt > this.maxDurationMs) {
         // 只 return 是不够的：在跑的 turn 会继续跑完，并在一个已经没有驱动的团队里派活，
         // 那些工作包就永远停在 open（实测发生过：组长在超时后 2 分钟派出 3 个工作包）。
-        return this.drainAndStop(running);
+        return this.drainAndStop(running, supervisor.id);
       }
 
       this.store.expireWaits(this.turnTimeoutMs);
@@ -141,9 +163,9 @@ export class TeamService {
       const ready = slots > 0 ? this.store.readyMembers(slots) : [];
       for (const member of ready) {
         const task = this.runOne(member, input.signal).finally(() => {
-          running.delete(task);
+          running.delete(member.id);
         });
-        running.add(task);
+        running.set(member.id, task);
       }
 
       const stalled = running.size === 0 && ready.length === 0 && !this.store.hasWaiting();
@@ -169,6 +191,8 @@ export class TeamService {
    */
   async staff(input: { signal?: AbortSignal } = {}): Promise<TeamStartResult> {
     const supervisor = this.ensureSupervisor();
+    // 崩溃恢复只负责把成员从 running 放回 idle、按认领快照补 pending_fresh；
+    // 记忆由 agent 自己通过 SaveMemory 写，不再由调度器补摘要。
     const recovered = this.store.recoverDanglingTurns();
     if (recovered > 0) {
       this.options.logger?.warn?.("Team resumed staffing after an unclean exit", {
@@ -244,36 +268,40 @@ export class TeamService {
     };
   }
 
-  private readMemory(memberName: string): string {
+  /** 读成员自己的记忆并生成背景资料；没有记录时返回 undefined，不注入空条目。 */
+  private readMemoryContext(memberName: string): string | undefined {
     const dir = this.options.memoryDir;
-    return dir === undefined ? "" : readMemberMemory(dir, memberName);
+    if (dir === undefined) return undefined;
+    const context = formatMemoryContext(readMemberMemory(dir, memberName));
+    return context.length > 0 ? context : undefined;
+  }
+
+  /** 这一轮认领的任务范围是否整体结束；结束后下一次新任务要清空旧对话。 */
+  private settleTurn(turn: ClaimedTurn): { scopeClosed: boolean } {
+    return { scopeClosed: this.store.turnScope(turn).scopeClosed };
   }
 
   /**
-   * 把这一轮写进成员自己的记忆文件。系统侧自动维护——模型不需要记得写，
-   * 而进程重启后它会从文件里读到「我上次干到哪」。
+   * 一轮的统一结算：按认领快照判断任务范围是否关闭，再交还成员状态。
+   * 记忆不在这里写：agent 通过 SaveMemory 自己落盘，调度器只负责收尾状态。
    */
-  private recordMemory(
+  private completeTurn(
     turn: ClaimedTurn,
-    outcome: { ok: boolean; error?: string },
+    outcome: { ok: boolean; error?: string; stalled?: boolean },
+    awaitingReply: boolean,
   ): void {
-    const dir = this.options.memoryDir;
-    if (dir === undefined) return;
-    const names = new Map(this.store.members().map((member) => [member.id, member.name]));
-    const head = turn.messages
-      .slice(0, 3)
-      .map(
-        (message) =>
-          `${message.kind} 来自 ${names.get(message.from) ?? "?"}「${oneLine(message.content, 24)}」`,
-      )
-      .join("；");
-    const more = turn.messages.length > 3 ? ` 等 ${turn.messages.length} 条` : "";
-    const result = outcome.ok ? "ok" : `失败：${oneLine(outcome.error ?? "", 40)}`;
-    appendMemberMemory(
-      dir,
-      turn.member.name,
-      `${head.length > 0 ? head : "没有新消息"}${more} → ${result}`,
-    );
+    const settlement = this.settleTurn(turn);
+    if (settlement.scopeClosed) {
+      this.store.setPendingFresh(turn.member.id, true);
+    }
+    this.store.finishTurn({
+      turnId: turn.turnId,
+      memberId: turn.member.id,
+      awaitingReply,
+      ...(outcome.ok
+        ? {}
+        : { stalled: outcome.stalled === true, error: outcome.error ?? "unknown error" }),
+    });
   }
 
   private async runOne(
@@ -282,6 +310,9 @@ export class TeamService {
     intent: { staffing?: boolean } = {},
   ): Promise<void> {
     const turn = this.store.claimTurn(member);
+    // 上一个任务范围已关闭，且这一轮确实有新任务：让 runner 先清空模型上下文。
+    // 只有追问/系统消息、没有新任务时不消费 pending_fresh，保留旧上下文。
+    const freshContext = turn.pendingFresh && turn.openTasks.length > 0;
     // 只有**这一轮**新加的等待才算「我要等回复」。上一轮留下的未到期等待不能让他
     // 在已经干完活之后继续挂着——那会把一个空闲的人错标成 waiting，团队看起来停滞。
     const waitsBefore = this.store.waitCount(member.id);
@@ -307,6 +338,9 @@ export class TeamService {
         : undefined;
 
     try {
+      // 记忆不进 prompt：它由 runner 作为背景上下文注入模型请求，
+      // 用户 query 只保留这一轮要做的事。
+      const backgroundContext = this.readMemoryContext(member.name);
       const prompt = buildTeamTurnPrompt({
         member: turn.member,
         members: this.store.members(),
@@ -314,10 +348,6 @@ export class TeamService {
         tasks: this.store.tasks(),
         goal: this.store.getMeta("goal") ?? "",
         ...(intent.staffing === true ? { staffing: true } : {}),
-        ...(() => {
-          const memory = this.readMemory(member.name);
-          return memory.length > 0 ? { memory } : {};
-        })(),
       });
       this.options.logger?.info?.(`Team turn: ${member.name}`, {
         event: "team.turn.started",
@@ -332,40 +362,50 @@ export class TeamService {
         onActivity: () => {
           active.lastActivityAt = Date.now();
         },
+        ...(backgroundContext === undefined ? {} : { backgroundContext }),
+        ...(freshContext ? { freshContext: true } : {}),
       });
-      this.recordMemory(turn, outcome);
-      this.store.finishTurn({
-        turnId: turn.turnId,
-        memberId: member.id,
-        awaitingReply: this.store.waitCount(member.id) > waitsBefore,
-        ...(outcome.ok
-          ? {}
-          : {
-              stalled: active.stalledAt !== undefined,
-              error: active.stalledAt !== undefined
-                ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
-                : timedOut
-                  ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先看已经产出/改动了什么，再决定继续、缩小范围或上报，不要从头再来一遍。`
-                  : (outcome.error ?? "unknown error"),
-            }),
-      });
+      if (freshContext && outcome.contextReset === "applied") {
+        this.store.setPendingFresh(member.id, false);
+      }
+      const stalled = active.stalledAt !== undefined;
+      this.completeTurn(
+        turn,
+        {
+          ok: outcome.ok,
+          ...(outcome.ok
+            ? {}
+            : {
+                stalled,
+                error: stalled
+                  ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
+                  : timedOut
+                    ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先看已经产出/改动了什么，再决定继续、缩小范围或上报，不要从头再来一遍。`
+                    : (outcome.error ?? "unknown error"),
+              }),
+        },
+        this.store.waitCount(member.id) > waitsBefore,
+      );
     } catch (error) {
       // 兜底：runner 自己抛错（而不是返回 ok=false）时，团队不能因此永远停在 running。
       // 中止导致的抛错要和「执行失败」分开说：给模型的是「先看已经产出了什么」，
       // 不是「换一种做法重跑一遍」——后者会把已经写了一半的文件再写一遍。
-      this.store.finishTurn({
-        turnId: turn.turnId,
-        memberId: member.id,
-        awaitingReply: false,
-        stalled: active.stalledAt !== undefined,
-        error: active.stalledAt !== undefined
-          ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
-          : timedOut
-            ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先检查已产出/已改动的文件，再决定继续、缩小范围或上报，不要从头再来。`
-            : error instanceof Error
-              ? error.message
-              : String(error),
-      });
+      this.completeTurn(
+        turn,
+        {
+          ok: false,
+          stalled: active.stalledAt !== undefined,
+          error:
+            active.stalledAt !== undefined
+              ? `已有 ${Math.max(1, Math.round(this.stallTimeoutMs / 60_000))} 分钟没有任何输出，判定为卡住并中止了这一轮。`
+              : timedOut
+                ? `本轮超过 ${Math.max(1, Math.round(this.turnTimeoutMs / 60_000))} 分钟被中止。先检查已产出/已改动的文件，再决定继续、缩小范围或上报，不要从头再来。`
+                : error instanceof Error
+                  ? error.message
+                  : String(error),
+        },
+        false,
+      );
     } finally {
       clearTimeout(turnTimer);
       if (stallTimer !== undefined) clearInterval(stallTimer);
@@ -382,7 +422,10 @@ export class TeamService {
    * 近 900 秒，就这样被掐掉，任务板上留下三个 open 任务和三条未读的失败消息。
    * 软停让快跑完的那一轮正常交还，只有等满宽限期还没收尾的才被中止。
    */
-  private async drainAndStop(running: Set<Promise<void>>): Promise<TeamStartResult> {
+  private async drainAndStop(
+    running: Map<string, Promise<void>>,
+    supervisorId: string,
+  ): Promise<TeamStartResult> {
     this.options.logger?.warn?.("Team delivery reached max duration, draining", {
       event: "team.delivery.draining",
       module: "bootstrap.team",
@@ -394,7 +437,13 @@ export class TeamService {
     const drainDeadline = Date.now() + this.turnTimeoutMs;
     while (running.size > 0 && Date.now() < drainDeadline) {
       const delivered = this.store.delivery();
-      if (delivered !== undefined) return { ok: true, summary: delivered };
+      if (delivered !== undefined) {
+        // 同 run() 的交付路径：deliver() 写在主管这一轮里，等它把 finishTurn
+        // 与任务记忆收尾完，再返回，避免调用方在收尾前读到半截状态。
+        const supervisorTurn = running.get(supervisorId);
+        if (supervisorTurn !== undefined) await supervisorTurn;
+        return { ok: true, summary: delivered };
+      }
       this.store.expireWaits(this.turnTimeoutMs);
       await delay(this.pollMs);
     }
@@ -445,10 +494,10 @@ export class TeamService {
   }
 
   /** 中止所有在跑的回合，并等它们把状态交还（finishTurn 会把成员放回 idle）。 */
-  private async abortRunningTurns(running: Set<Promise<void>>): Promise<void> {
+  private async abortRunningTurns(running: Map<string, Promise<void>>): Promise<void> {
     for (const active of this.activeTurns.values()) active.controller.abort();
     this.activeTurns.clear();
-    await Promise.allSettled([...running]);
+    await Promise.allSettled(running.values());
     // 等待租约在终止后没有意义：留着会让下一次发起误判为「还有人在等」。
     this.store.clearWaits();
   }

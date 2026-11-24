@@ -79,7 +79,9 @@ export function TeamSidePane({
   onOpenArchitecture?: () => void;
 }) {
   const { zcodeAgentService } = useServices();
-  const { snapshot, error, now, reload: load } = useTeamSnapshot(tab.workspacePath);
+  const { snapshot, error, now, reload: load } = useTeamSnapshot(tab.workspacePath, {
+    workspaceIdentity: tab.workspaceIdentity,
+  });
   const [teamName, setTeamName] = useState("");
   const [requirement, setRequirement] = useState("");
   const [busy, setBusy] = useState(false);
@@ -92,15 +94,19 @@ export function TeamSidePane({
     if (busy) return;
     setBusy(true);
     try {
-      await zcodeAgentService.writeTeamConfig({ workspacePath: tab.workspacePath, name });
+      await zcodeAgentService.writeTeamConfig({
+        workspacePath: tab.workspacePath,
+        ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+        name,
+      });
       await load();
     } catch (caught) {
-      // 建团队失败要说给用户听：写 `.zcode/team.json` 可能被权限或磁盘状态挡住。
+      // 建团队失败要说给用户听：写用户数据目录可能被权限或磁盘状态挡住。
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
     }
-  }, [busy, load, tab.workspacePath, teamName, zcodeAgentService]);
+  }, [busy, load, tab.workspaceIdentity, tab.workspacePath, teamName, zcodeAgentService]);
 
   const dispatch = useCallback(() => {
     const text = requirement.trim();

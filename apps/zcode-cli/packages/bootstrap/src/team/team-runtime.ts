@@ -78,18 +78,67 @@ export function createAgentRuntimeTeamRunner(input: {
       await ensureRuntime(member);
     },
 
-    async run({ member, prompt, signal, onActivity }) {
+    async run({ member, prompt, signal, freshContext, backgroundContext, onActivity }) {
       activityHooks.set(member.id, onActivity);
+      let contextReset: "applied" | "skipped" | undefined;
       try {
         const runtime = await ensureRuntime(member);
         syncPersona(runtime, member);
+        if (freshContext === true) {
+          // 上一个任务范围已关闭，且这一轮有新任务：丢掉旧任务的 provider 上下文。
+          // 只清 messageHistory，session transcript 仍保留给界面审计。
+          const reset = runtime.resetConversationToContextPrefix();
+          contextReset = reset.ok ? "applied" : "skipped";
+          if (!reset.ok) {
+            input.logger.warn(`Team context reset skipped: ${member.name}`, {
+              event: "team.turn.context_reset_skipped",
+              module: "bootstrap.team",
+              member: member.name,
+              reason: reset.reason,
+            });
+          }
+        }
+        // 记忆是背景资料，不是用户的 query：作为 team_memory 的 system-reminder 注入。
+        // 重置被 busy 拒绝时不改历史，保留旧条目，等下一轮再刷新。
+        if (
+          backgroundContext !== undefined &&
+          backgroundContext.trim().length > 0 &&
+          (freshContext !== true || contextReset === "applied")
+        ) {
+          const injected = runtime.setTeamMemoryContext({ text: backgroundContext });
+          if (!injected.ok) {
+            input.logger.warn(`Team memory context skipped: ${member.name}`, {
+              event: "team.turn.memory_skipped",
+              module: "bootstrap.team",
+              member: member.name,
+              reason: injected.reason,
+            });
+          } else {
+            input.logger.debug(`Team memory context injected: ${member.name}`, {
+              event: "team.turn.memory_injected",
+              module: "bootstrap.team",
+              member: member.name,
+              chars: backgroundContext.length,
+            });
+          }
+        }
         await runtime.executeTurn(prompt, undefined, { abortSignal: signal });
         // 一轮结束不等于成功：成员有没有产出，看它有没有调 SubmitTask / MessageTeammate。
         // 这些判断留在 store（任务板与邮箱），runner 只负责把这一轮跑完。
-        return { ok: true };
+        return { ok: true, ...(contextReset === undefined ? {} : { contextReset }) };
       } catch (error) {
-        if (signal.aborted) return { ok: false, error: "cancelled" };
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        if (signal.aborted) {
+          return {
+            ok: false,
+            error: "cancelled",
+            ...(contextReset === undefined ? {} : { contextReset }),
+          };
+        }
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          ...(contextReset === undefined ? {} : { contextReset }),
+        };
       } finally {
         activityHooks.set(member.id, undefined);
       }

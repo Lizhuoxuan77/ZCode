@@ -360,6 +360,24 @@ describe("buildProviderRequestMessages", () => {
     expect(result.diagnostics.latestRealUserMessageIndex).toBe(2);
   });
 
+  it("keeps team memory on the user side before the task prompt", () => {
+    const entries = [
+      attachment("team_memory", "你的长期记忆：改了 a.ts"),
+      entry(user("task prompt"), "real_user"),
+    ] satisfies RuntimeMessageEntry[];
+
+    const result = buildProviderRequestMessages({
+      entries,
+      useMidConversationSystem: true,
+    });
+
+    // 记忆是背景资料，不能被 MCS 提升成排在任务之后的 system 指令。
+    expect(result.messages).toEqual([
+      { role: "user", content: "<system-reminder>\n你的长期记忆：改了 a.ts\n</system-reminder>" },
+      { role: "user", content: "task prompt" },
+    ]);
+  });
+
   it("ends the user text right before a real user input with a newline", () => {
     const entries = [
       attachment("context_prefix", "instructions"),

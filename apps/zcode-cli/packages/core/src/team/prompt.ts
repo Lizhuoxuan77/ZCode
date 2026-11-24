@@ -5,8 +5,11 @@
 // 出问题时可复现（每次唤醒都从磁盘装载，没有任何内存里的上下文可以漂移）。
 //
 // 这里只负责「这一轮」：为什么醒、要处理什么、干完该调哪个工具。
-// 身份、岗位、模块边界与会话记忆由成员创建时的 system prompt 承担（buildMemberPersona）；
+// 身份、岗位、模块边界与会话记忆声明由成员创建时的 system prompt 承担（buildMemberPersona）；
 // 每轮重复那些静态内容只会让同一个人每次醒来都重读同一段话。
+//
+// 成员记忆正文不在这里。调度器在叫醒前读文件，把它作为背景上下文交给 runtime 注入；
+// 放进这条用户消息会把「我自己记得什么」和「这一轮要做什么」混成一件事。
 
 import type { TeamMemberRef, TeamMessageRef, TeamTaskRef } from "@zcode/contracts";
 import { assignableRoles, hirableRoles } from "./policy.js";
@@ -27,8 +30,6 @@ export interface TeamTurnContext {
    * 同一个成员、同一个提示词骨架，只有「现在怎么做」这一段不同。
    */
   staffing?: boolean;
-  /** 这个成员自己的记忆（上次结束时的记录）。没有就不放这一段。 */
-  memory?: string;
 }
 
 function rosterLine(member: TeamMemberRef, selfId: string): string {
@@ -54,7 +55,7 @@ export function buildMemberPersona(member: TeamMemberRef): string {
     member.module
       ? `你负责的模块：${member.module}。这个范围内的事由你决定；范围外要改，先找负责人商量。`
       : "",
-    "你的会话是你的独立记忆：同事看不到你的上下文，你也看不到他们的。需要对齐就发消息。",
+    "你的会话和长期记忆只属于你：同事看不到你的上下文，你也看不到他们的。需要对齐就发消息。",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -110,16 +111,6 @@ export function buildTeamTurnPrompt(context: TeamTurnContext): string {
   if (context.failure !== undefined) {
     sections.push(
       `上一轮执行失败：${context.failure}\n请换一种做法，重复同样的调用只会再失败一次。`,
-    );
-  }
-
-  if (context.memory !== undefined && context.memory.trim().length > 0) {
-    sections.push(
-      [
-        "你上次结束时的记录（属于你个人的记忆，不是别人告诉你的）：",
-        context.memory.trim(),
-        "这些是过去的事实。接着做之前先核对文件现状，记录可能已过期。",
-      ].join("\n"),
     );
   }
 

@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS team_member (
   status     TEXT NOT NULL,
   session_id TEXT NOT NULL UNIQUE,
   module     TEXT NOT NULL DEFAULT '',
+  /** 上一个任务范围已关闭，下一次出现新任务时要先清空模型上下文。 */
+  pending_fresh INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS team_message (
@@ -89,7 +91,9 @@ CREATE TABLE IF NOT EXISTS team_turn (
   started_at INTEGER NOT NULL,
   ended_at   INTEGER,
   outcome    TEXT,
-  error      TEXT
+  error      TEXT,
+  /** 认领时该成员 open task 的快照；turn 结束/崩溃恢复据此判断任务范围是否关闭。 */
+  open_tasks_json TEXT NOT NULL DEFAULT '[]'
 );
 `;
 
@@ -111,6 +115,7 @@ interface MemberRow {
   status: string;
   session_id: string;
   module: string;
+  pending_fresh: number;
   created_at: number;
 }
 
@@ -186,6 +191,12 @@ export interface ClaimedTurn {
   turnId: string;
   member: TeamMemberRef;
   messages: readonly TeamMessageRef[];
+  /** 认领时刻；任务关闭用 created_at/updated_at 比较时以它为准。 */
+  startedAt: number;
+  /** 认领时该成员自己的 open task 快照。turn 期间新到的任务不在里面。 */
+  openTasks: readonly TeamTaskRef[];
+  /** 上一个任务范围是否已关闭；调度器只在有新任务时消费它。 */
+  pendingFresh: boolean;
 }
 
 export class TeamStore implements TeamPort {
@@ -221,6 +232,18 @@ export class TeamStore implements TeamPort {
     );
     if (!memberColumns.has("module")) {
       this.db.exec("ALTER TABLE team_member ADD COLUMN module TEXT NOT NULL DEFAULT ''");
+    }
+    if (!memberColumns.has("pending_fresh")) {
+      this.db.exec("ALTER TABLE team_member ADD COLUMN pending_fresh INTEGER NOT NULL DEFAULT 0");
+    }
+
+    const turnColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(team_turn)").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!turnColumns.has("open_tasks_json")) {
+      this.db.exec("ALTER TABLE team_turn ADD COLUMN open_tasks_json TEXT NOT NULL DEFAULT '[]'");
     }
 
     const columns = new Set(
@@ -295,6 +318,43 @@ export class TeamStore implements TeamPort {
       .prepare("SELECT * FROM team_member WHERE role = ? ORDER BY created_at LIMIT 1")
       .get(role) as unknown as MemberRow | undefined;
     return row === undefined ? undefined : toMember(row);
+  }
+
+  /** 上一个任务范围是否已关闭；调度器只在“有新任务”时消费它。 */
+  pendingFresh(memberId: string): boolean {
+    const row = this.db
+      .prepare("SELECT pending_fresh FROM team_member WHERE id = ?")
+      .get(memberId) as { pending_fresh: number } | undefined;
+    return row?.pending_fresh === 1;
+  }
+
+  setPendingFresh(memberId: string, value: boolean): void {
+    this.db
+      .prepare("UPDATE team_member SET pending_fresh = ? WHERE id = ?")
+      .run(value ? 1 : 0, memberId);
+  }
+
+  /** 认领快照的任务里，哪些已经关闭；全部关闭才算这个任务范围结束。 */
+  turnScope(turn: ClaimedTurn): {
+    closedTasks: readonly TeamTaskRef[];
+    scopeClosed: boolean;
+  } {
+    return this.scopeForSnapshot(turn.openTasks.map((task) => task.id));
+  }
+
+  private scopeForSnapshot(taskIds: readonly string[]): {
+    closedTasks: readonly TeamTaskRef[];
+    scopeClosed: boolean;
+  } {
+    if (taskIds.length === 0) return { closedTasks: [], scopeClosed: false };
+    const byId = new Map(this.tasks().map((task) => [task.id, task]));
+    const closedTasks = taskIds
+      .map((id) => byId.get(id))
+      .filter((task): task is TeamTaskRef => task !== undefined && task.state !== "open");
+    return {
+      closedTasks,
+      scopeClosed: closedTasks.length === taskIds.length,
+    };
   }
 
   waitCount(memberId: string): number {
@@ -580,12 +640,21 @@ export class TeamStore implements TeamPort {
 
   /** 有未消费消息的 idle 成员。这是唯一的「谁该跑」判据。 */
   readyMembers(limit: number): readonly TeamMemberRef[] {
+    // 原来按成员入职时间排序，会让最早入职、又持续收发消息的主管/产品经理长期占满
+    // 并发名额：只要它们一直有未读，后入职的干活成员就永远轮不到（实测四个岗位
+    // 13 分钟没有一轮）。调度顺序应该以「工作等了多久」为准，所以取每个人最早一条
+    // 未读消息的时间；同一时间再按入职时间与 rowid 兜底，保证顺序确定、可复现。
     const rows = this.db
       .prepare(
         `SELECT m.* FROM team_member m
          WHERE m.status = 'idle'
            AND EXISTS (SELECT 1 FROM team_message g WHERE g.to_id = m.id AND g.consumed_at IS NULL)
-         ORDER BY m.created_at
+         ORDER BY (
+           SELECT MIN(g.created_at) FROM team_message g
+           WHERE g.to_id = m.id AND g.consumed_at IS NULL
+         ) ASC,
+         m.created_at ASC,
+         m.rowid ASC
          LIMIT ?`,
       )
       .all(limit) as unknown as MemberRow[];
@@ -601,6 +670,19 @@ export class TeamStore implements TeamPort {
            ORDER BY created_at LIMIT 50`,
         )
         .all(member.id) as unknown as MessageRow[];
+      // 任务范围 = 认领这一刻该成员自己的 open task。turn 期间新到的任务不进来，
+      // 这样“旧任务全部关闭 + 新任务刚到”的下一次叫醒可以安全清空上下文。
+      const openTasks = (
+        this.db
+          .prepare(
+            `SELECT * FROM team_task WHERE owner_id = ? AND state = 'open'
+             ORDER BY created_at`,
+          )
+          .all(member.id) as unknown as TaskRow[]
+      ).map(toTask);
+      const pendingRow = this.db
+        .prepare("SELECT pending_fresh FROM team_member WHERE id = ?")
+        .get(member.id) as { pending_fresh: number } | undefined;
       const turnId = this.newId("turn");
       const ts = this.now();
       const update = this.db.prepare(
@@ -609,9 +691,19 @@ export class TeamStore implements TeamPort {
       for (const row of rows) update.run(ts, turnId, row.id);
       this.db.prepare("UPDATE team_member SET status = 'running' WHERE id = ?").run(member.id);
       this.db
-        .prepare("INSERT INTO team_turn (id, member_id, started_at) VALUES (?, ?, ?)")
-        .run(turnId, member.id, ts);
-      return { turnId, member, messages: rows.map(toMessage) };
+        .prepare(
+          `INSERT INTO team_turn (id, member_id, started_at, open_tasks_json)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(turnId, member.id, ts, JSON.stringify(openTasks));
+      return {
+        turnId,
+        member,
+        messages: rows.map(toMessage),
+        startedAt: ts,
+        openTasks,
+        pendingFresh: pendingRow?.pending_fresh === 1,
+      };
     });
   }
 
@@ -843,13 +935,29 @@ export class TeamStore implements TeamPort {
    * 进程重启后，上一轮 claim 过的 turn 一定没有 ended_at。
    * 这些成员不能继续停在 running（没人会来交还），必须重新可跑并收到一条说明。
    */
-  recoverDanglingTurns(): number {
+  recoverDanglingTurns(
+    onClosed?: (input: {
+      member: TeamMemberRef;
+      closedTasks: readonly TeamTaskRef[];
+      startedAt: number;
+    }) => void,
+  ): number {
     const rows = this.db
       .prepare("SELECT * FROM team_turn WHERE ended_at IS NULL")
-      .all() as Array<{ id: string; member_id: string }>;
+      .all() as Array<{
+        id: string;
+        member_id: string;
+        started_at: number;
+        open_tasks_json: string;
+      }>;
     for (const row of rows) {
       const member = this.memberById(row.member_id);
       if (!member) continue;
+      // 崩溃前可能已经把任务提交了，只是没来得及 finishTurn。用认领快照对账，
+      // 已关闭的任务补写记忆并置 pending_fresh；没关闭的保持原状。
+      const { closedTasks, scopeClosed } = this.scopeForSnapshot(
+        taskIdsFromSnapshot(row.open_tasks_json),
+      );
       this.transaction(() => {
         this.db
           .prepare("UPDATE team_turn SET ended_at = ?, outcome = 'recovered' WHERE id = ?")
@@ -866,7 +974,15 @@ export class TeamStore implements TeamPort {
         this.db
           .prepare("UPDATE team_member SET status = 'idle' WHERE id = ? AND status = 'running'")
           .run(member.id);
+        if (scopeClosed) {
+          this.db
+            .prepare("UPDATE team_member SET pending_fresh = 1 WHERE id = ?")
+            .run(member.id);
+        }
       });
+      if (closedTasks.length > 0) {
+        onClosed?.({ member, closedTasks, startedAt: row.started_at });
+      }
     }
     return rows.length;
   }
@@ -1025,6 +1141,23 @@ export function inferTaskPhase(content: string): string | undefined {
   if (/工作包|实现|编码/.test(content)) return "build";
   if (/验收|回归|测试/.test(content)) return "verify";
   return undefined;
+}
+
+/** 恢复用：从 team_turn.open_tasks_json 里取任务 id；坏数据当空快照。 */
+function taskIdsFromSnapshot(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) =>
+        typeof item === "object" && item !== null && "id" in item
+          ? (item as { id?: unknown }).id
+          : undefined,
+      )
+      .filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
 }
 
 function firstLine(content: string): string {

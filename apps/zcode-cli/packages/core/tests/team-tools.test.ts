@@ -13,13 +13,14 @@ import {
   createTurnId,
   type TeamMemberRef,
   type TeamPort,
+  type TeamSaveMemoryRequest,
   type TeamSubmitRequest,
   type TeamTaskRef,
 } from "@zcode/contracts";
 import { describe, expect, it } from "vitest";
 import { PermissionService, defaultPermissionConfig } from "../src/permission/service.js";
 import { createToolExecutor } from "../src/tool/executor.js";
-import { teamSubmitToolEntry } from "../src/tool/handlers/team.js";
+import { teamSaveMemoryToolEntry, teamSubmitToolEntry } from "../src/tool/handlers/team.js";
 import { createToolRegistry } from "../src/tool/registry.js";
 import type { ToolExecutionResult } from "../src/tool/types.js";
 
@@ -55,8 +56,10 @@ function fakeTask(state: TeamTaskRef["state"]): TeamTaskRef {
 function createTeamPort(state: TeamTaskRef["state"] = "open"): {
   port: TeamPort;
   submitted: TeamSubmitRequest[];
+  saved: TeamSaveMemoryRequest[];
 } {
   const submitted: TeamSubmitRequest[] = [];
+  const saved: TeamSaveMemoryRequest[] = [];
   const member = fakeMember();
   const task = fakeTask(state);
   const port: TeamPort = {
@@ -74,11 +77,14 @@ function createTeamPort(state: TeamTaskRef["state"] = "open"): {
       submitted.push(request);
       return { ...task, state: "done", result: request.result };
     },
+    saveMemory: (request) => {
+      saved.push(request);
+    },
     deliver: () => {
       throw new Error("deliver is not used in this test");
     },
   };
-  return { port, submitted };
+  return { port, submitted, saved };
 }
 
 function createExecutor(port: TeamPort) {
@@ -86,6 +92,7 @@ function createExecutor(port: TeamPort) {
   const traceContext = createRootTraceContext({ sessionId: SESSION_ID, turnId });
   const registry = createToolRegistry();
   registry.register(teamSubmitToolEntry);
+  registry.register(teamSaveMemoryToolEntry);
   const executor = createToolExecutor({
     emitEvent: async () => undefined,
     permissionService: new PermissionService(defaultPermissionConfig),
@@ -102,6 +109,96 @@ function modelText(result: ToolExecutionResult): string {
   const content = result.modelContent;
   return typeof content === "string" ? content : JSON.stringify(content ?? "");
 }
+
+describe("SubmitTask tool description", () => {
+  it("要求提交前用 SaveMemory 记录要点，而不是把记忆塞进 result", () => {
+    const description = teamSubmitToolEntry.metadata.description ?? "";
+    expect(description).toContain("SaveMemory");
+    expect(description).toContain("3-5 key points");
+    expect(description).toContain("next task starts from it");
+    expect(description).not.toContain("记忆要点");
+  });
+});
+
+describe("SaveMemory handler output", () => {
+  it("按调用会话解析身份，把 agent 自己总结的要点写进记忆", async () => {
+    const { port, saved } = createTeamPort("open");
+    const { executor, traceContext } = createExecutor(port);
+
+    const result = await executor.execute(
+      {
+        id: createToolCallId("team-save-memory-kind"),
+        input: { kind: "knowledge", content: "接口约定：src/a.ts 的 run() 返回 Promise。" },
+        name: teamSaveMemoryToolEntry.metadata.name,
+      },
+      { traceContext },
+    );
+
+    expect(result.success).toBe(true);
+    expect(saved).toEqual([
+      {
+        fromSessionId: SESSION_ID,
+        kind: "knowledge",
+        content: "接口约定：src/a.ts 的 run() 返回 Promise。",
+      },
+    ]);
+    expect(result.output).toMatchObject({ message: expect.stringContaining("已记住") });
+    expect(modelText(result)).toContain("模块知识");
+  });
+
+  it("kind 缺省为 task，不需要模型每次重复", async () => {
+    const { port, saved } = createTeamPort("open");
+    const { executor, traceContext } = createExecutor(port);
+
+    const result = await executor.execute(
+      {
+        id: createToolCallId("team-save-memory-default"),
+        input: { content: "改了 a.ts；验证 typecheck 通过。" },
+        name: teamSaveMemoryToolEntry.metadata.name,
+      },
+      { traceContext },
+    );
+
+    expect(result.success).toBe(true);
+    expect(saved[0]?.kind).toBe("task");
+  });
+
+  it("端口不支持记忆时返回业务失败，不谎称已保存", async () => {
+    const { port } = createTeamPort("open");
+    delete (port as { saveMemory?: unknown }).saveMemory;
+    const { executor, traceContext } = createExecutor(port);
+
+    const result = await executor.execute(
+      {
+        id: createToolCallId("team-save-memory-unsupported"),
+        input: { content: "要点" },
+        name: teamSaveMemoryToolEntry.metadata.name,
+      },
+      { traceContext },
+    );
+
+    expect(result.success).toBe(false);
+    expect(modelText(result)).toContain("不支持保存记忆");
+  });
+
+  it("空白内容不会被记成一条空记忆", async () => {
+    const { port, saved } = createTeamPort("open");
+    const { executor, traceContext } = createExecutor(port);
+
+    const result = await executor.execute(
+      {
+        id: createToolCallId("team-save-memory-empty"),
+        input: { content: "   " },
+        name: teamSaveMemoryToolEntry.metadata.name,
+      },
+      { traceContext },
+    );
+
+    expect(result.success).toBe(false);
+    expect(saved).toHaveLength(0);
+    expect(modelText(result)).toContain("记忆内容不能为空");
+  });
+});
 
 describe("SubmitTask handler output", () => {
   it("成功提交时返回可读回执，而不是把任务对象当失败送去格式校验", async () => {

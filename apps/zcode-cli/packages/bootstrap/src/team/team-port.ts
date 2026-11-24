@@ -7,20 +7,22 @@
 // 谁是成员由 `member(sessionId)` 回答——工具注册门读的就是它，模型无法伪造身份。
 //
 // **开关是「有没有配置」，不是「有没有这个方法」**：`start` 恒在场，
-// 每次调用都会重读 `.zcode/team.json`；没有配置就返回一条让模型能转告用户的提示。
+// 每次调用都会重读用户目录里的团队配置；没有配置就返回一条让模型能转告用户的提示。
 //
 // 惰性打开：没有配置时连 SQLite 都不碰。不用团队的项目不会多出一个数据库文件。
 
-import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { basename } from "node:path";
 import {
   DEFAULT_TEAM_LIMITS,
+  TeamFlowError,
   type Logger,
   type SessionId,
   type TeamCreateMemberRequest,
   type TeamLimits,
   type TeamMemberRef,
   type TeamPort,
+  type TeamSaveMemoryRequest,
   type TeamSendMessageRequest,
   type TeamStartMode,
   type TeamStartResult,
@@ -29,19 +31,14 @@ import {
   type TeamTaskRef,
   type TraceContext,
 } from "@zcode/contracts";
+import type { TeamStoragePaths } from "@zcode/shared/node";
 import type { ScriptWorkflowAgentRuntimeDeps } from "../app/script-workflow-child-runtime.js";
-import {
-  loadTeamConfig,
-  teamDatabasePath,
-  TEAM_DB_RELATIVE_PATH,
-  type TeamConfig,
-} from "./team-config.js";
+import { loadTeamConfig, type TeamConfig } from "./team-config.js";
+import { appendSavedMemory } from "./team-memory.js";
 import { createAgentRuntimeTeamRunner, type AgentRuntimeTeamRunner } from "./team-runtime.js";
 import { TeamService } from "./team-service.js";
+import { migrateLegacyTeamStorage } from "./team-storage.js";
 import { TeamStore } from "./team-store.js";
-
-/** 成员记忆目录（相对 workspace）。 */
-const TEAM_MEMORY_RELATIVE_PATH = join(".zcode", "team", "memory");
 
 export interface TeamPortHandle extends TeamPort {
   dispose(): Promise<void>;
@@ -49,11 +46,20 @@ export interface TeamPortHandle extends TeamPort {
 
 export function createTeamPort(input: {
   workingDirectory: string;
+  /** 团队数据在用户目录里的位置；项目里不再写任何团队文件。 */
+  storage: TeamStoragePaths;
   logger: Logger;
   traceContext: TraceContext;
   /** 惰性：主 runtime 在工具注册之后才就绪，端口不能反过来要求它先存在。 */
   getRuntimeDeps: () => ScriptWorkflowAgentRuntimeDeps;
 }): TeamPortHandle {
+  // 旧版本把团队写在项目里；启动时先搬一次，再开始读配置/开库。
+  // 非团队项目只做两次 existsSync，不产生任何目录。
+  migrateLegacyTeamStorage({
+    workspacePath: input.workingDirectory,
+    storage: input.storage,
+    logger: input.logger,
+  });
   let store: TeamStore | undefined;
   let runner: AgentRuntimeTeamRunner | undefined;
   let running: Promise<TeamStartResult> | undefined;
@@ -70,8 +76,8 @@ export function createTeamPort(input: {
       return {
         ok: false,
         summary:
-          "这个项目还没有团队，所以没有可发起的交付。请让用户打开右侧侧栏的「团队」面板，点「创建团队」起一个名字；" +
-          "或手动在项目根目录写 .zcode/team.json（至少 {\"name\": \"…\"}）。建好之后不需要重启，再调用一次即可。",
+          "这个项目还没有团队，所以没有可发起的交付。请让用户打开右侧侧栏的「团队」面板，点「创建团队」起一个名字。" +
+          "团队配置保存在 ZCode 的用户数据目录，不会写进项目；建好之后不需要重启，再调用一次即可。",
       };
     }
     // 同一个团队同时只跑一次交付：两次交付共用一块任务板，谁也分不清哪条消息属于哪次。
@@ -106,7 +112,7 @@ export function createTeamPort(input: {
       stallTimeoutMs: current.stallTimeoutMs,
       logger: input.logger,
       projectName: basename(input.workingDirectory) || current.name,
-      memoryDir: join(input.workingDirectory, TEAM_MEMORY_RELATIVE_PATH),
+      memoryDir: input.storage.memoryDir,
     });
 
     if (startInput.mode === "init") {
@@ -130,8 +136,7 @@ export function createTeamPort(input: {
     member(sessionId: SessionId): TeamMemberRef | undefined {
       const current = readConfig();
       if (!current) return undefined;
-      const dbPath = join(input.workingDirectory, TEAM_DB_RELATIVE_PATH);
-      if (store === undefined && !existsSync(dbPath)) return undefined;
+      if (store === undefined && !existsSync(input.storage.databasePath)) return undefined;
       return openStore(current).member(sessionId);
     },
 
@@ -188,6 +193,24 @@ export function createTeamPort(input: {
       return requireStore().submit(submitInput);
     },
 
+    saveMemory(memoryInput: TeamSaveMemoryRequest): void {
+      // 身份只来自调用会话：模型不能传名字给别人的记忆写东西。
+      const member = requireStore().member(memoryInput.fromSessionId);
+      if (!member) {
+        throw new TeamFlowError("当前会话不是团队成员，不能保存记忆。");
+      }
+      try {
+        appendSavedMemory(input.storage.memoryDir, member.name, {
+          kind: memoryInput.kind,
+          content: memoryInput.content,
+        });
+      } catch (error) {
+        throw new TeamFlowError(
+          `保存记忆失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+
     deliver(deliverInput: { fromSessionId: SessionId; content: string }): void {
       requireStore().deliver(deliverInput);
     },
@@ -215,14 +238,18 @@ export function createTeamPort(input: {
   // 每次调用都重读磁盘：面板里「新建团队」写完之后，当前会话不必重启就能用上。
   // 一次 stat+read 的开销远小于重启会话的代价，而团队配置改动频率极低。
   function readConfig(): TeamConfig | undefined {
-    return loadTeamConfig(input.workingDirectory);
+    return loadTeamConfig(input.storage.configPath);
   }
 
   function openStore(current: TeamConfig): TeamStore {
-    store ??= new TeamStore({
-      file: teamDatabasePath(input.workingDirectory),
-      limits: current.limits,
-    });
+    store ??= (() => {
+      // SQLite 不会替我们建目录；团队目录不存在时先建，首次开库才成功。
+      mkdirSync(input.storage.root, { recursive: true });
+      return new TeamStore({
+        file: input.storage.databasePath,
+        limits: current.limits,
+      });
+    })();
     return store;
   }
 

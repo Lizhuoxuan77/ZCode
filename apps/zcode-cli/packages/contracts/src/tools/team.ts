@@ -4,7 +4,7 @@ import { toToolJsonSchema } from "./json-schema.js";
 // ============================================================
 // Team Agent tools
 // ============================================================
-// 五个工具，全部只写状态、不等待：发消息不阻塞，要等结果用 awaitReply 把**自己**挂起，
+// 六个工具，全部只写状态、不等待：发消息不阻塞，要等结果用 awaitReply 把**自己**挂起，
 // 由调度器在对方回复后重新唤醒。这样长链路（主管→组长→前端→后端）不会把上下文窗口
 // 耗在等待上，进程中途死掉也能从磁盘接着跑。
 
@@ -13,11 +13,15 @@ export const TEAM_CREATE_MEMBER_TOOL_NAME = "CreateTeammate";
 export const TEAM_MESSAGE_TOOL_NAME = "MessageTeammate";
 export const TEAM_SUBMIT_TOOL_NAME = "SubmitTask";
 export const TEAM_DELIVER_TOOL_NAME = "DeliverResult";
+export const TEAM_SAVE_MEMORY_TOOL_NAME = "SaveMemory";
 
 export const TEAM_ROLE_VALUES = ["supervisor", "pm", "ui", "lead", "fe", "be", "qa"] as const;
 export const TEAM_MESSAGE_KINDS = ["task", "result", "question", "answer", "system", "reject"] as const;
+export const TEAM_MEMORY_KINDS = ["task", "knowledge"] as const;
 
 const MAX_CONTENT = 20_000;
+/** 记忆是索引，不是档案：一次保存允许 agent 写 3–5 条要点，不能粘贴任务全文。 */
+const MAX_MEMORY_CONTENT = 2_000;
 
 export const TeamCreateMemberInputSchema = z
   .object({
@@ -101,6 +105,28 @@ export const TeamSubmitInputSchema = z
 export type TeamSubmitInput = z.infer<typeof TeamSubmitInputSchema>;
 
 export const TeamSubmitInputJsonSchema = toToolJsonSchema(TeamSubmitInputSchema);
+
+export const TeamSaveMemoryInputSchema = z
+  .object({
+    kind: z
+      .enum(TEAM_MEMORY_KINDS)
+      .default("task")
+      .describe(
+        "task = what this task changed, decided, verified and left behind; knowledge = durable module convention, interface fact or pitfall.",
+      ),
+    content: z
+      .string()
+      .min(1)
+      .max(MAX_MEMORY_CONTENT)
+      .describe(
+        "3-5 short key points you summarized yourself. Not the task result, not the transcript; do not paste full logs.",
+      ),
+  })
+  .strict();
+
+export type TeamSaveMemoryInput = z.infer<typeof TeamSaveMemoryInputSchema>;
+
+export const TeamSaveMemoryInputJsonSchema = toToolJsonSchema(TeamSaveMemoryInputSchema);
 
 export const TeamDeliverInputSchema = z
   .object({

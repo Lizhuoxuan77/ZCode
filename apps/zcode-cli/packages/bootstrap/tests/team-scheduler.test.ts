@@ -8,13 +8,17 @@ import { TeamStore } from "../src/team/team-store.js";
 const dirs: string[] = [];
 const stores: TeamStore[] = [];
 
-function newStore(limits: { maxRevisions?: number } = {}): TeamStore {
+function newStore(
+  limits: { maxRevisions?: number } = {},
+  now?: () => number,
+): TeamStore {
   const dir = mkdtempSync(join(tmpdir(), "zcode-team-"));
   dirs.push(dir);
   const store = new TeamStore({
     file: join(dir, "team.db"),
     limits: { maxMembers: 6, maxDepth: 3, maxRevisions: 1, maxQuestionHops: 3, ...limits },
     idPrefix: "t",
+    ...(now === undefined ? {} : { now }),
   });
   stores.push(store);
   return store;
@@ -42,7 +46,7 @@ function scriptedRunner(store: TeamStore): TeamTurnRunner {
           store.deliver({ fromSessionId: member.sessionId, content: "超时后按默认方案交付。" });
           return { ok: true };
         }
-        // 判据必须是「收到同事的结果」，不能用「提交」二字：提示词模板里
+// 判据必须是「收到同事的结果」，不能用「提交」二字：提示词模板里
         // 「干完了用 SubmitTask 提交」每轮都在，用它会第一轮就判定交付，从没招过人。
         if (prompt.includes("【result】")) {
           store.deliver({ fromSessionId: member.sessionId, content: "交付：规划 + 实现。" });
@@ -96,6 +100,69 @@ describe("team scheduler", () => {
     expect(store.tasks().every((task) => task.state !== "open")).toBe(true);
     // 人都还在（没有 done 状态）——干完只是回到 idle。
     expect(store.members().map((member) => member.status)).toEqual(["idle", "idle"]);
+  });
+
+  it("选人按最早未读消息排序，不能按入职时间让协调者长期占位", () => {
+    let clock = 1_000;
+    const store = newStore({}, () => clock);
+
+    const supervisor = store.createSupervisor({
+      name: "主管",
+      role: "supervisor",
+      purpose: "接需求",
+    });
+    // 协调者入职最早；旧实现会让它们在两个并发名额里永远排第一。
+    clock = 1_010;
+    store.createMember({
+      bySessionId: supervisor.sessionId,
+      name: "产品经理",
+      role: "pm",
+      purpose: "出规划",
+    });
+    clock = 1_020;
+    store.createMember({
+      bySessionId: supervisor.sessionId,
+      name: "界面设计",
+      role: "ui",
+      purpose: "出视觉",
+    });
+    clock = 1_030;
+    store.createMember({
+      bySessionId: supervisor.sessionId,
+      name: "技术组长",
+      role: "lead",
+      purpose: "做外壳",
+    });
+
+    // 两个干活岗位的任务明显更早；产品经理后来又收到一条更新鲜的任务。
+    clock = 1_100;
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "界面设计",
+      kind: "task",
+      content: "先做视觉规范",
+    });
+    clock = 1_110;
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "技术组长",
+      kind: "task",
+      content: "先搭应用外壳",
+    });
+    clock = 5_000;
+    store.send({
+      fromSessionId: supervisor.sessionId,
+      to: "产品经理",
+      kind: "task",
+      content: "补一份规划文档",
+    });
+
+    // 旧实现按入职时间会先选产品经理（1010）和界面设计（1020）；
+    // 修复后按最早未读消息，界面设计（1100）和技术组长（1110）必须先被选中。
+    expect(store.readyMembers(2).map((member) => member.name)).toEqual([
+      "界面设计",
+      "技术组长",
+    ]);
   });
 
   it("maxDurationMs = 0 表示不限，不会因为「已运行 0 毫秒」立即超时", async () => {

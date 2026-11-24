@@ -19,7 +19,7 @@ export interface UseTeamSnapshotResult {
 
 export function useTeamSnapshot(
   workspacePath: string,
-  options: { messageLimit?: number; enabled?: boolean } = {},
+  options: { messageLimit?: number; enabled?: boolean; workspaceIdentity?: string } = {},
 ): UseTeamSnapshotResult {
   const { zcodeAgentService } = useServices();
   const [snapshot, setSnapshot] = useState<ZCodeTeamSnapshot | undefined>(undefined);
@@ -28,10 +28,15 @@ export function useTeamSnapshot(
   const aliveRef = useRef(true);
   const enabled = options.enabled ?? true;
   const messageLimit = options.messageLimit ?? 60;
+  const workspaceIdentity = options.workspaceIdentity;
 
   const load = useCallback(async () => {
     try {
-      const next = await zcodeAgentService.getTeamSnapshot({ workspacePath, messageLimit });
+      const next = await zcodeAgentService.getTeamSnapshot({
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        messageLimit,
+      });
       if (!aliveRef.current) return;
       setSnapshot(next);
       setError(undefined);
@@ -39,7 +44,7 @@ export function useTeamSnapshot(
       if (!aliveRef.current) return;
       setError(caught instanceof Error ? caught.message : String(caught));
     }
-  }, [messageLimit, workspacePath, zcodeAgentService]);
+  }, [messageLimit, workspaceIdentity, workspacePath, zcodeAgentService]);
 
   useEffect(() => {
     aliveRef.current = true;

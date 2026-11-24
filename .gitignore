@@ -97,8 +97,8 @@ packages/desktop/build/generated/
 # team-agent/ 是团队功能的 v0.1 独立原型（先行验证调度语义），产品实现已落在
 # contracts/core/bootstrap 的 team 模块中，原型仅作本地归档，不入库
 team-agent/
-# 团队功能的本地开关与运行期状态：team.json 决定本工作区是否启用 StartTeam，
-# team/ 下是 team.db 等运行库。只忽略这两项而非整个 .zcode/，
-# 保留该目录给后续可共享的 workspace 配置
+# 旧版团队功能的本地开关与运行期状态（现已迁到用户数据目录）。
+# 保留忽略项只为本机旧数据兜底，避免迁移前的残留被误提交
 .zcode/team.json
 .zcode/team/
+.zcode/

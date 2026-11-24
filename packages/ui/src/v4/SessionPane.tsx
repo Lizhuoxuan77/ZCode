@@ -5411,12 +5411,6 @@ export function SessionPane({
     sessionId !== null &&
     (snapshot === null || (state.status === "connecting" && !snapshot.runtimeInitialization));
   const errored = sessionId !== null && state.status === "error";
-  // 团队成员的会话在它第一次被叫醒时才落库；此前打开它必然报 Session not found。
-  // 这不是故障，是「还没有工作记录」的空态——尤其组建期主管刚招完人，个个都点不开。
-  const teamMemberSessionMissing =
-    errored &&
-    (sessionId?.startsWith("sess_team-") ?? false) &&
-    (state.lastError ?? "").includes("Session not found");
   // runtime 不在线（崩溃后重连中或重连失败）时，旧快照里的运行项已经没有执行者：胶囊计时停在
   // 断开前、停止入口隐藏；重连后的 CLI 投影给出真正的终态。
   const runtimeOffline = sessionId !== null && snapshot !== null && state.status !== "live";
@@ -5482,6 +5476,16 @@ export function SessionPane({
   // worktree 创建视图盖在本会话上，直到时间线出现内容或订阅出错（docs/git/worktree.md §3.3）。
   const finishWorktreeHandoff = useZCodeSessionStore((store) => store.finishWorktreeHandoff);
   const timelineHasRows = (timelineRows?.totalCount ?? 0) > 0;
+  // 团队成员的会话在招人时就已落库（不等第一轮被叫醒），所以「还没跑过」不再表现为
+  // Session not found，而是一条订阅成功但零消息的会话；旧会话不存在时仍可能报 not found。
+  // 两种形态都属于「还没有工作记录」，必须给空态，否则主区只剩一片空白。
+  const teamMemberSessionWithoutWorkRecord =
+    (sessionId?.startsWith("sess_team-") ?? false) &&
+    (errored
+      ? (state.lastError ?? "").includes("Session not found")
+      : snapshot !== null &&
+        snapshot.sessionId === sessionId &&
+        (timelineRows?.totalCount ?? snapshot.rows.totalCount) === 0);
   useEffect(() => {
     if (sessionId && (timelineHasRows || errored))
       finishWorktreeHandoff(workspacePath, sessionId, workspaceIdentity);
@@ -6801,15 +6805,18 @@ export function SessionPane({
             </div>
           ) : null}
 
-          {teamMemberSessionMissing ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+          {teamMemberSessionWithoutWorkRecord ? (
+            <div
+              data-testid="v4-team-member-no-work-record"
+              className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+            >
               <div className="flex size-11 items-center justify-center rounded-full bg-muted">
                 <UsersRound className="size-5 text-muted-foreground" aria-hidden />
               </div>
               <div className="text-ui-base font-semibold text-foreground">还没有工作记录</div>
               <div className="max-w-md text-ui-sm leading-relaxed text-muted-foreground">
-                这个成员被招进来后还没接过第一个任务，所以这里还没有内容。
-                等它接到活跑起来，这里就是它的工作过程；右侧团队面板可以看到整个组织的进度。
+                这个成员还没开始执行任务，所以这里还没有内容。
+                等它接到活跑起来，这里就是它的工作过程；团队面板可以看到整个组织的进度。
               </div>
             </div>
           ) : errored && remoteAvailable ? (

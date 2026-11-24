@@ -1,5 +1,6 @@
-// 成员的身份、岗位、模块边界和会话记忆由创建时的 system prompt（buildMemberPersona）承担。
-// 每轮唤醒提示只保留动态上下文：团队目标、名册、收件箱、任务板、成员记忆。
+// 成员的身份、岗位、模块边界和会话记忆声明由创建时的 system prompt（buildMemberPersona）承担；
+// 长期记忆规则在团队契约里，记忆正文由 runtime 作为背景上下文注入。
+// 每轮唤醒提示只保留动态上下文：团队目标、名册、收件箱、任务板、组建/交付模式。
 // 模块在运行中可被 updateMember 修改；team-runtime 在下一轮开始前重算 persona 并刷新系统提示。
 // 团队目标每次交付都会重写，不能固化进创建时的 persona。
 
@@ -74,7 +75,7 @@ describe("team member persona", () => {
     expect(persona).toContain(roleBrief("lead"));
     expect(persona).toContain("这个岗位在本团队里的职责：负责办公插件模块的实施与复核");
     expect(persona).toContain("你负责的模块：src/renderer/src/dock-plugins/**");
-    expect(persona).toContain("你的会话是你的独立记忆");
+    expect(persona).toContain("你的会话和长期记忆只属于你");
   });
 
   it("没有模块时不留下空的模块说明", () => {
@@ -116,5 +117,14 @@ describe("team turn prompt", () => {
 
     expect(prompt).toContain("现在是**组建期**");
     expect(prompt).not.toContain("你的岗位：");
+  });
+
+  it("本轮提示不再携带记忆正文、路径或保存指令", () => {
+    const prompt = build();
+
+    expect(prompt).not.toContain("你的长期记忆");
+    expect(prompt).not.toContain("记忆文件");
+    expect(prompt).not.toContain("（还没有记录）");
+    expect(prompt).not.toContain("SaveMemory");
   });
 });

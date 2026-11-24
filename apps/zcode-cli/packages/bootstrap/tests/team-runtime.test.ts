@@ -35,6 +35,10 @@ function fakeRuntime() {
     ensureSessionPersistedForExternalActivity: vi.fn(async () => undefined),
     executeTurn: vi.fn(async () => undefined),
     updateWorkflowActor: vi.fn(),
+    resetConversationToContextPrefix: vi.fn(() => ({ ok: true as const })),
+    setTeamMemoryContext: vi.fn(() => ({ ok: true as const })),
+    // 看门狗依赖会话事件订阅当活性心跳：fake 必须提供，否则 ensureRuntime 直接抛错。
+    subscribeEvents: vi.fn(() => () => undefined),
     closeBrowserSession: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
@@ -64,6 +68,7 @@ describe("team member runtime persona", () => {
   beforeEach(() => {
     mocks.createRuntime.mockReset();
     logger.info.mockReset();
+    logger.warn.mockReset();
   });
 
   it("创建时写团队契约与模块，模块变更后只刷新 system prompt", async () => {
@@ -114,6 +119,86 @@ describe("team member runtime persona", () => {
       signal: new AbortController().signal,
     });
     expect(runtime.updateWorkflowActor).toHaveBeenCalledTimes(1);
+    // 没有 freshContext 的普通轮次不得清上下文。
+    expect(runtime.resetConversationToContextPrefix).not.toHaveBeenCalled();
+
+    await runner.dispose();
+  });
+
+  it("新任务 starting fresh 时清空模型上下文，不重建 runtime", async () => {
+    const runtime = fakeRuntime();
+    mocks.createRuntime.mockReturnValue(runtime);
+    const runner = createRunner();
+
+    await runner.prepare(MEMBER);
+    const outcome = await runner.run({
+      member: MEMBER,
+      prompt: "新任务",
+      signal: new AbortController().signal,
+      freshContext: true,
+    });
+
+    expect(outcome).toMatchObject({ ok: true, contextReset: "applied" });
+    expect(runtime.resetConversationToContextPrefix).toHaveBeenCalledTimes(1);
+    expect(mocks.createRuntime).toHaveBeenCalledTimes(1);
+
+    await runner.dispose();
+  });
+
+  it("把记忆作为背景上下文注入模型请求，且排在 executeTurn 之前", async () => {
+    const runtime = fakeRuntime();
+    mocks.createRuntime.mockReturnValue(runtime);
+    const runner = createRunner();
+    const order: string[] = [];
+    runtime.setTeamMemoryContext.mockImplementation(() => {
+      order.push("memory");
+      return { ok: true as const };
+    });
+    runtime.executeTurn.mockImplementation(async () => {
+      order.push("turn");
+    });
+
+    await runner.prepare(MEMBER);
+    await runner.run({
+      member: MEMBER,
+      prompt: "任务",
+      signal: new AbortController().signal,
+      backgroundContext: "你的长期记忆：改了 a.ts",
+    });
+
+    expect(runtime.setTeamMemoryContext).toHaveBeenCalledWith({
+      text: "你的长期记忆：改了 a.ts",
+    });
+    expect(order).toEqual(["memory", "turn"]);
+
+    await runner.dispose();
+  });
+
+  it("重置被 busy 拒绝时返回 skipped，交给调度器保留待清空标志", async () => {
+    const runtime = fakeRuntime();
+    runtime.resetConversationToContextPrefix.mockReturnValue({
+      ok: false as const,
+      reason: "busy" as const,
+    });
+    mocks.createRuntime.mockReturnValue(runtime);
+    const runner = createRunner();
+
+    await runner.prepare(MEMBER);
+    const outcome = await runner.run({
+      member: MEMBER,
+      prompt: "新任务",
+      signal: new AbortController().signal,
+      freshContext: true,
+      backgroundContext: "旧任务记忆",
+    });
+
+    expect(outcome).toMatchObject({ ok: true, contextReset: "skipped" });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("context reset skipped"),
+      expect.objectContaining({ reason: "busy" }),
+    );
+    // 清空没做成时不改历史，保留旧记忆条目，下一次叫醒再刷新。
+    expect(runtime.setTeamMemoryContext).not.toHaveBeenCalled();
 
     await runner.dispose();
   });

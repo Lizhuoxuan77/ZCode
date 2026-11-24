@@ -2041,6 +2041,21 @@ exceptions:
     rule: unmanaged-new-file
     paths: [apps/zcode-cli/packages/core/src/runtime/methods/interrupt-marker.ts]
     reason: 停止轮次后给模型的中断标记放在 runtime/methods 的独立小文件，避免继续增大已超行数的 turn.ts；复用隐藏提醒的落盘函数（persistRuntimeReminderMessage）与历史提交，Core 模块边界不变，接管整个 zcode-cli 目录不在本次范围内。
+  - id: context-reset-unmanaged-new-file
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/context-reset.ts]
+    reason: 团队任务级上下文隔离需要“回到 context prefix、丢掉上一段任务对话”的运行时原语；放在 runtime/methods 的独立小文件，复用 MessageHistory.reset + rebuildContextPrefix，只被团队 runtime 在任务边界调用，Core 模块边界不变，接管整个 zcode-cli runtime 不在本次范围内。
+  - id: team-memory-context-unmanaged-new-file
+    rule: unmanaged-new-file
+    paths: [apps/zcode-cli/packages/core/src/runtime/methods/team-memory-context.ts]
+    reason: 团队成员记忆需要一条“只对模型可见、不进用户 query”的背景上下文原语；放在 runtime/methods 的独立小文件，复用 MessageHistory 的附件条目与 team_memory system-reminder source，只被 bootstrap 的团队 runtime 在每轮叫醒前调用，Core 模块边界不变，接管整个 zcode-cli runtime 不在本次范围内。
+  - id: team-storage-user-data-unmanaged-new-file
+    rule: unmanaged-new-file
+    paths:
+      - packages/shared/src/node/teamStorage.ts
+      - apps/zcode-cli/packages/bootstrap/src/team/team-storage.ts
+      - packages/services/src/zcode-agent/teamStorage.ts
+    reason: 团队配置、运行库与成员记忆从用户项目迁到 ZCode 用户数据目录；路径解析放在 shared/node 供 CLI 与桌面端共用，agent 侧只新增一次性旧数据迁移小文件，services 侧只新增桌面端定位小文件。三者都复用既有团队目录与数据根约定，不新增跨模块依赖方向，接管 shared/services/zcode-cli 整个目录不在本次范围内。
   - id: instruction-files-delta-unmanaged-new-file
     rule: unmanaged-new-file
     paths: [apps/zcode-cli/packages/core/src/context/sections/instruction-files.ts]

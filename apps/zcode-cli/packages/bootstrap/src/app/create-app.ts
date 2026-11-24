@@ -53,6 +53,7 @@ import {
   type MessageId,
 } from "@zcode/contracts";
 import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
+import { resolveTeamStoragePaths } from "@zcode/shared/node";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
   ZCodeAttachmentFaultError,
@@ -989,11 +990,19 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       registry: options.providerRegistry,
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
-    // 团队 agent：workspace 里有 `.zcode/team.json` 才在真正用到时打开 SQLite。
-    // 端口恒注入，工具注册门读的是 `member(sessionId)` 与 `start` 的在场，
+    // 团队 agent：配置、运行库与成员记忆都放在 ZCode 用户数据目录（按工作区身份分目录），
+    // 不再写进用户项目。端口恒注入，工具注册门读的是 `member(sessionId)` 与 `start` 的在场，
     // 所以不用团队的项目不会多出一个数据库文件，也感觉不到任何行为变化。
+    const teamStorage = resolveTeamStoragePaths({
+      cliStorageRoot,
+      workspacePath: workingDirectory,
+      ...(runtimeConfig.memory?.workspaceIdentity
+        ? { workspaceIdentity: runtimeConfig.memory.workspaceIdentity }
+        : {}),
+    });
     const teamPort = createTeamPort({
       workingDirectory,
+      storage: teamStorage,
       logger,
       traceContext,
       getRuntimeDeps: () => ({
@@ -1140,6 +1149,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           // 按 --workflow-mode 显式取值；缺席（进程内嵌入方）不设门禁，见 runtimeConfig 字段注释。
           dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
           workingDirectory,
+          teamConfigPath: teamStorage.configPath,
         });
         if (builtin !== undefined) {
           if (builtin.name === BUILTIN_WORKFLOW_COMMAND_NAME) {

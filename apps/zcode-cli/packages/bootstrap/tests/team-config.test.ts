@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,9 +9,10 @@ const dirs: string[] = [];
 function withConfig(raw: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), "zcode-team-config-"));
   dirs.push(dir);
-  mkdirSync(join(dir, ".zcode"), { recursive: true });
-  writeFileSync(join(dir, ".zcode", "team.json"), JSON.stringify(raw), "utf8");
-  return dir;
+  // 团队配置现在在用户目录的团队存储根里，文件名仍是 team.json。
+  const configPath = join(dir, "team.json");
+  writeFileSync(configPath, JSON.stringify(raw), "utf8");
+  return configPath;
 }
 
 afterEach(() => {
