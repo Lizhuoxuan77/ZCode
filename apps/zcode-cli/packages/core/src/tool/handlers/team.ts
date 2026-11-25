@@ -110,7 +110,7 @@ const createMemberHandler: ToolHandler = async (input, context) => {
     const updated = guard(() =>
       port.updateMember?.({
         bySessionId: context.sessionId,
-        name: parsed.name,
+        memberId: existing.id,
         ...(parsed.module === undefined ? {} : { module: parsed.module }),
         ...(parsed.purpose === undefined ? {} : { purpose: parsed.purpose }),
       }),
@@ -148,7 +148,7 @@ const createMemberHandler: ToolHandler = async (input, context) => {
   if (isToolHandlerFailure(member)) return member;
   const scope = member.module ? `，负责「${member.module}」` : "";
   return {
-    message: `已招入 ${member.name}（${roleLabel(member.role)}）${scope}。派活用 MessageTeammate，收件人写名字。`,
+    message: `已招入 ${member.name}（${roleLabel(member.role)}）${scope}。派活用 MessageTeammate，收件人写它的 id（名册里每个名字后面就是）。`,
     memberId: member.id,
     name: member.name,
     role: member.role,
@@ -159,10 +159,11 @@ const messageHandler: ToolHandler = async (input, context) => {
   const parsed = TeamMessageInputSchema.parse(input) as TeamMessageInput;
   const { port, self } = requireTeamMember(context, TEAM_MESSAGE_TOOL_NAME);
 
-  const target = port.members().find((member) => member.name === parsed.to);
+  // 收件人只按成员 id 解析：名字是展示标签，可能被清洗后撞车或被改掉。
+  const target = port.members().find((member) => member.id === parsed.to);
   if (!target) {
-    const names = port.members().map((member) => member.name).join("、");
-    return fail(`没有叫「${parsed.to}」的成员。现有成员：${names}`);
+    const roster = port.members().map((member) => `${member.name}（${member.id}）`).join("、");
+    return fail(`没有 id 为「${parsed.to}」的成员。收件人请写名册里的成员 id。现有成员：${roster}`);
   }
   if (target.id === self.id) return fail("不要给自己发消息");
 
@@ -203,6 +204,7 @@ const messageHandler: ToolHandler = async (input, context) => {
       : `已发给 ${target.name}。`,
     messageId: message.id,
     to: target.name,
+    toMemberId: target.id,
     kind: message.kind,
     awaitingReply: waiting,
   };
@@ -374,6 +376,8 @@ export const teamCreateMemberToolEntry: ToolEntry = {
       "",
       "Hires one member into this team. The post outlives the task: a member you hire can be woken later by anyone who messages it.",
       "",
+      "The result contains this member's `memberId`; address it by that id in MessageTeammate. The name is a display label and is not used for addressing.",
+      "",
       "Always pass `module`: the directories, files or responsibility boundary this member owns. It is what keeps two people off the same files, and it is what the member reads every time it wakes up. Two members must not own overlapping paths.",
       "",
       "Hire only when you can name the work this post will own. A team of idle specialists costs tokens and adds no decisions.",
@@ -408,7 +412,9 @@ export const teamMessageToolEntry: ToolEntry = {
     description: [
       "# MessageTeammate",
       "",
-      "Sends a message to a teammate by name. This is the only way to reach another member — your plain text output is not visible to them.",
+      "Sends a message to a teammate by member id. This is the only way to reach another member — your plain text output is not visible to them.",
+      "",
+      "Copy the recipient's id from your roster (`id:tm_member_…`); names are display labels only and will not be resolved.",
       "",
       "kinds: `task` assigns work (only to posts you may assign); `question` asks for a decision or a fact; `answer`/`result` reports back; `reject` returns a submitted deliverable that fails its acceptance criteria.",
       "",

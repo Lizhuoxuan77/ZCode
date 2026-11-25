@@ -8,7 +8,7 @@
 // 这正是 dynamic-workflow 的 actor 用的那条路（createScriptWorkflowAgentRuntime）：
 // 差别只在驱动者。workflow 由脚本决定叫谁跑，团队由邮箱决定。
 
-import { buildMemberPersona, type AgentRuntime } from "@zcode/core";
+import { buildMemberPersona, type AgentRuntime, type TeamPersonaContext } from "@zcode/core";
 import {
   SessionEventType,
   type Logger,
@@ -52,8 +52,11 @@ export interface AgentRuntimeTeamRunner extends TeamTurnRunner {
   /**
    * 招进来就把会话落库（不跑任何一轮）。成员在第一次被叫醒前也必须有可打开的页面，
    * 否则面板点它 = "Session not found"——组建期主管一口气招四五个人，个个都点不开。
+   *
+   * `personaContext` 是招人这一刻的团队背景（目标 + 名册）：写进 system prompt，
+   * 让成员在第一次被叫醒前就有一份完整的身份，而不是等第一轮再补。
    */
-  prepare(member: TeamMemberRef): Promise<void>;
+  prepare(member: TeamMemberRef, personaContext?: TeamPersonaContext): Promise<void>;
   /** 关掉所有成员会话（含浏览器 tab）。进程退出时调用。 */
   dispose(): Promise<void>;
 }
@@ -64,7 +67,7 @@ export function createAgentRuntimeTeamRunner(input: {
   traceContext: TraceContext;
 }): AgentRuntimeTeamRunner {
   const runtimes = new Map<string, AgentRuntime>();
-  /** 创建 runtime 时写进 system prompt 的 persona 快照；模块/职责改了要对比它。 */
+  /** 创建 runtime 时写进 system prompt 的 persona 快照；模块/职责/目标/名册改了要对比它。 */
   const personas = new Map<string, string>();
   /**
    * 当前这一轮的活动回调。事件订阅是 runtime 级的（跨轮复用），而「谁在听」是 turn 级的，
@@ -74,16 +77,24 @@ export function createAgentRuntimeTeamRunner(input: {
   const unsubscribers = new Map<string, () => void>();
 
   return {
-    async prepare(member: TeamMemberRef) {
-      await ensureRuntime(member);
+    async prepare(member: TeamMemberRef, personaContext?: TeamPersonaContext) {
+      await ensureRuntime(member, personaContext);
     },
 
-    async run({ member, prompt, signal, freshContext, backgroundContext, onActivity }) {
+    async run({
+      member,
+      prompt,
+      personaContext,
+      signal,
+      freshContext,
+      backgroundContext,
+      onActivity,
+    }) {
       activityHooks.set(member.id, onActivity);
       let contextReset: "applied" | "skipped" | undefined;
       try {
-        const runtime = await ensureRuntime(member);
-        syncPersona(runtime, member);
+        const runtime = await ensureRuntime(member, personaContext);
+        syncPersona(runtime, member, personaContext);
         if (freshContext === true) {
           // 上一个任务范围已关闭，且这一轮有新任务：丢掉旧任务的 provider 上下文。
           // 只清 messageHistory，session transcript 仍保留给界面审计。
@@ -160,11 +171,14 @@ export function createAgentRuntimeTeamRunner(input: {
     },
   };
 
-  async function ensureRuntime(member: TeamMemberRef): Promise<AgentRuntime> {
+  async function ensureRuntime(
+    member: TeamMemberRef,
+    personaContext?: TeamPersonaContext,
+  ): Promise<AgentRuntime> {
     const existing = runtimes.get(member.id);
     if (existing) return existing;
 
-    const persona = buildMemberPersona(member);
+    const persona = buildMemberPersona(member, personaContext);
     const runtime = createScriptWorkflowAgentRuntime({
       childSessionId: member.sessionId,
       deps: input.deps,
@@ -220,12 +234,16 @@ export function createAgentRuntimeTeamRunner(input: {
   }
 
   /**
-   * 模块/职责改了，人设跟着变。只换 system prompt 的身份段，不重建 runtime：
+   * 模块/职责/团队目标/名册变了，人设跟着变。只换 system prompt 的身份段，不重建 runtime：
    * 重建会丢掉进程内的 messageHistory；会话 transcript 虽然落库，但同一进程里的
    * 新 runtime 不会自动把历史接回来。下一轮开始前调用，此时没有在跑的 turn。
    */
-  function syncPersona(runtime: AgentRuntime, member: TeamMemberRef): void {
-    const persona = buildMemberPersona(member);
+  function syncPersona(
+    runtime: AgentRuntime,
+    member: TeamMemberRef,
+    personaContext?: TeamPersonaContext,
+  ): void {
+    const persona = buildMemberPersona(member, personaContext);
     if (personas.get(member.id) === persona) return;
     runtime.updateWorkflowActor({ name: member.name, persona, kind: "team" });
     personas.set(member.id, persona);

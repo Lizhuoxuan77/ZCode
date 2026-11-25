@@ -11,7 +11,7 @@
 // 超时与崩溃都不是异常分支，而是**消息**：watchdog 往邮箱里投一条，等待者下一轮读到。
 // 这样正常路径和异常路径只有一条代码路径。
 
-import { buildTeamTurnPrompt } from "@zcode/core";
+import { buildTeamTurnPrompt, type TeamPersonaContext } from "@zcode/core";
 import type { Logger, TeamMemberRef, TeamRole, TeamStartResult } from "@zcode/contracts";
 import { formatMemoryContext, readMemberMemory } from "./team-memory.js";
 import { TeamStore, type ClaimedTurn } from "./team-store.js";
@@ -20,8 +20,14 @@ export interface TeamTurnRunner {
   /** 跑一轮。ok=false 时的 error 会作为系统消息回投给这个成员。 */
   run(input: {
     member: TeamMemberRef;
+    /** 这一轮要做的事。固定背景（目标/名册/权限/工作方式）不进这里。 */
     prompt: string;
     signal: AbortSignal;
+    /**
+     * 当前阶段内不变的团队背景，写进 system prompt。与 prompt 分开传，
+     * 是为了让 runner 能在人设变化时只刷新 system prompt，而不重复塞进每轮消息。
+     */
+    personaContext?: TeamPersonaContext;
     /**
      * 这一轮有任何可观测的输出时调用：模型开始请求、流式吐字、工具开跑/出结果。
      * 看门狗用它判断「多久没有输出」，而不是用墙钟判断「跑了多久」。
@@ -268,11 +274,11 @@ export class TeamService {
     };
   }
 
-  /** 读成员自己的记忆并生成背景资料；没有记录时返回 undefined，不注入空条目。 */
-  private readMemoryContext(memberName: string): string | undefined {
+  /** 读成员自己的记忆并生成背景资料；按成员 id 定位，名字不参与。没有记录时返回 undefined。 */
+  private readMemoryContext(memberId: string): string | undefined {
     const dir = this.options.memoryDir;
     if (dir === undefined) return undefined;
-    const context = formatMemoryContext(readMemberMemory(dir, memberName));
+    const context = formatMemoryContext(readMemberMemory(dir, memberId));
     return context.length > 0 ? context : undefined;
   }
 
@@ -338,16 +344,21 @@ export class TeamService {
         : undefined;
 
     try {
-      // 记忆不进 prompt：它由 runner 作为背景上下文注入模型请求，
-      // 用户 query 只保留这一轮要做的事。
-      const backgroundContext = this.readMemoryContext(member.name);
+      // 记忆不进 prompt：它由 runner 作为背景上下文注入模型请求。
+      // 目标/名册/权限/工作方式是阶段内不变的背景，交给 runner 写进 system prompt；
+      // query 只保留这一轮要做的事（未完成任务 + 收件箱）。
+      const backgroundContext = this.readMemoryContext(member.id);
+      const members = this.store.members();
+      const personaContext: TeamPersonaContext = {
+        goal: this.store.getMeta("goal") ?? "",
+        members,
+        ...(intent.staffing === true ? { staffing: true } : {}),
+      };
       const prompt = buildTeamTurnPrompt({
         member: turn.member,
-        members: this.store.members(),
+        members,
         inbox: turn.messages,
         tasks: this.store.tasks(),
-        goal: this.store.getMeta("goal") ?? "",
-        ...(intent.staffing === true ? { staffing: true } : {}),
       });
       this.options.logger?.info?.(`Team turn: ${member.name}`, {
         event: "team.turn.started",
@@ -358,6 +369,7 @@ export class TeamService {
       const outcome = await this.runner.run({
         member: turn.member,
         prompt,
+        personaContext,
         signal: controller.signal,
         onActivity: () => {
           active.lastActivityAt = Date.now();

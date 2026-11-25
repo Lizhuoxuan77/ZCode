@@ -29,7 +29,7 @@ export const TeamCreateMemberInputSchema = z
       .string()
       .min(1)
       .max(40)
-      .describe("Unique name inside the team. Used to address this member later."),
+      .describe("Unique display name inside the team. Addressing uses the returned member id instead."),
     role: z.enum(TEAM_ROLE_VALUES).describe("Post this member fills; determines permissions."),
     purpose: z
       .string()
@@ -54,7 +54,14 @@ export const TeamCreateMemberInputJsonSchema = toToolJsonSchema(TeamCreateMember
 
 export const TeamMessageInputSchema = z
   .object({
-    to: z.string().min(1).max(60).describe("Teammate name."),
+    to: z
+      .string()
+      .min(1)
+      .max(80)
+      .describe(
+        "Recipient member id, copied from the roster (looks like `tm_member_…`). " +
+          "Names are display labels only and are not resolved.",
+      ),
     kind: z
       .enum(TEAM_MESSAGE_KINDS)
       .describe("task = assign work; question = need an answer; answer/result/reject = outcome."),

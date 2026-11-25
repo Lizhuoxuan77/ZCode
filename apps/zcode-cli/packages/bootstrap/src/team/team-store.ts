@@ -306,6 +306,7 @@ export class TeamStore implements TeamPort {
     return row === undefined ? undefined : toMember(row);
   }
 
+  /** 名字只用于展示与测试断言；不要拿它当寻址键。 */
   memberByName(name: string): TeamMemberRef | undefined {
     const row = this.db.prepare("SELECT * FROM team_member WHERE name = ?").get(name) as
       | MemberRow
@@ -434,10 +435,11 @@ export class TeamStore implements TeamPort {
   updateMember(input: TeamUpdateMemberRequest): TeamMemberRef {
     const by = this.member(input.bySessionId);
     if (!by) throw new Error("updateMember called from a non-member session");
-    const target = this.memberByName(input.name);
-    if (!target) throw new TeamFlowError(`团队里没有叫「${input.name}」的成员`);
+    // 目标只按成员 id 解析：名字是展示标签，不能作为身份。
+    const target = this.memberById(input.memberId);
+    if (!target) throw new TeamFlowError(`团队里没有 id 为「${input.memberId}」的成员`);
     if (by.role !== "supervisor" && target.parentId !== by.id) {
-      throw new TeamFlowError(`「${input.name}」不是你招的人，改职责要找它的上级`);
+      throw new TeamFlowError(`「${target.name}」不是你招的人，改职责要找它的上级`);
     }
     this.db
       .prepare("UPDATE team_member SET module = ?, purpose = ? WHERE id = ?")
@@ -465,8 +467,9 @@ export class TeamStore implements TeamPort {
   send(input: TeamSendMessageRequest): TeamMessageRef {
     const from = this.member(input.fromSessionId);
     if (!from) throw new Error("send called from a non-member session");
-    const target = this.memberByName(input.to) ?? this.memberById(input.to);
-    if (!target) throw new Error(`no teammate named ${input.to}`);
+    // 收件人只按成员 id 解析：名字不参与寻址，传名字会明确失败而不是碰巧命中同名的人。
+    const target = this.memberById(input.to);
+    if (!target) throw new TeamFlowError(`团队里没有 id 为「${input.to}」的成员`);
 
     return this.transaction(() => {
       const hop = input.kind === "question" ? this.nextHop(from.id) : 0;

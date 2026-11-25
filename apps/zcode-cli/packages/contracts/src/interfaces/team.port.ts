@@ -48,8 +48,12 @@ export type TeamMemoryKind = "task" | "knowledge";
 export type TeamTaskState = "open" | "done" | "failed";
 
 export interface TeamMemberRef {
+  /**
+   * 稳定身份：消息寻址、任务归属、等待租约与记忆文件都按它读写。
+   * 名字可能重复、可能被清洗后撞车，不能拿来当键。
+   */
   id: string;
-  /** 派活与提问都用名字寻址，模型不必记 tm_xxx 这种 id。 */
+  /** 只用于界面与人读的提示；不参与任何寻址。 */
   name: string;
   role: TeamRole;
   /** null = 主管，全队唯一。 */
@@ -100,14 +104,15 @@ export interface TeamCreateMemberRequest {
 /** 组建期补职责：给已经在编的成员补上模块边界，而不是再招一个重名的。 */
 export interface TeamUpdateMemberRequest {
   bySessionId: SessionId;
-  name: string;
+  /** 目标成员的 id（不是名字）。 */
+  memberId: string;
   module?: string;
   purpose?: string;
 }
 
 export interface TeamSendMessageRequest {
   fromSessionId: SessionId;
-  /** 成员名或会话 id。 */
+  /** 收件人的成员 id（`TeamMemberRef.id`），不是名字。 */
   to: string;
   kind: TeamMessageKind;
   content: string;
@@ -130,8 +135,8 @@ export interface TeamSubmitRequest {
 }
 
 /**
- * 成员保存自己的长期记忆。身份只来自 fromSessionId：模型不能指定别人的名字，
- * 也就不能越权往同事的记忆里写东西。
+ * 成员保存自己的长期记忆。身份只来自 fromSessionId：模型不能指定别人的名字（或 id），
+ * 也就不能越权往同事的记忆里写东西。落盘路径按成员 id 决定。
  */
 export interface TeamSaveMemoryRequest {
   fromSessionId: SessionId;

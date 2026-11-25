@@ -53,7 +53,7 @@ function scriptedRunner(store: TeamStore): TeamTurnRunner {
           return { ok: true };
         }
         if (!store.memberByName("产品")) {
-          store.createMember({
+          const pm = store.createMember({
             bySessionId: member.sessionId,
             name: "产品",
             role: "pm",
@@ -61,7 +61,7 @@ function scriptedRunner(store: TeamStore): TeamTurnRunner {
           });
           store.send({
             fromSessionId: member.sessionId,
-            to: "产品",
+            to: pm.id,
             kind: "task",
             content: "把这个需求拆成 plan.md",
             awaitReply: true,
@@ -113,21 +113,21 @@ describe("team scheduler", () => {
     });
     // 协调者入职最早；旧实现会让它们在两个并发名额里永远排第一。
     clock = 1_010;
-    store.createMember({
+    const pm = store.createMember({
       bySessionId: supervisor.sessionId,
       name: "产品经理",
       role: "pm",
       purpose: "出规划",
     });
     clock = 1_020;
-    store.createMember({
+    const ui = store.createMember({
       bySessionId: supervisor.sessionId,
       name: "界面设计",
       role: "ui",
       purpose: "出视觉",
     });
     clock = 1_030;
-    store.createMember({
+    const lead = store.createMember({
       bySessionId: supervisor.sessionId,
       name: "技术组长",
       role: "lead",
@@ -138,21 +138,21 @@ describe("team scheduler", () => {
     clock = 1_100;
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "界面设计",
+      to: ui.id,
       kind: "task",
       content: "先做视觉规范",
     });
     clock = 1_110;
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "技术组长",
+      to: lead.id,
       kind: "task",
       content: "先搭应用外壳",
     });
     clock = 5_000;
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "产品经理",
+      to: pm.id,
       kind: "task",
       content: "补一份规划文档",
     });
@@ -192,7 +192,7 @@ describe("team scheduler", () => {
             return { ok: true };
           }
           if (!store.memberByName("前端")) {
-            store.createMember({
+            const fe = store.createMember({
               bySessionId: member.sessionId,
               name: "前端",
               role: "fe",
@@ -200,7 +200,7 @@ describe("team scheduler", () => {
             });
             store.send({
               fromSessionId: member.sessionId,
-              to: "前端",
+              to: fe.id,
               kind: "task",
               content: "实现导出按钮",
               awaitReply: true,
@@ -236,7 +236,7 @@ describe("team scheduler", () => {
     const supervisorTurn = store.claimTurn(supervisor);
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "产品",
+      to: pm.id,
       kind: "task",
       content: "写 plan.md",
       awaitReply: true,
@@ -262,12 +262,17 @@ describe("team scheduler", () => {
     const store = newStore();
     const supervisor = store.createSupervisor({ name: "主管", role: "supervisor", purpose: "接需求" });
     store.startRequirement(supervisor.id, "做点事");
-    store.createMember({ bySessionId: supervisor.sessionId, name: "产品", role: "pm", purpose: "出规划" });
+    const pm = store.createMember({
+      bySessionId: supervisor.sessionId,
+      name: "产品",
+      role: "pm",
+      purpose: "出规划",
+    });
 
     const turn = store.claimTurn(supervisor);
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "产品",
+      to: pm.id,
       kind: "task",
       content: "写 plan.md",
       awaitReply: true,
@@ -293,7 +298,7 @@ describe("team scheduler", () => {
 
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "产品",
+      to: pm.id,
       kind: "task",
       content: "写 plan.md",
       awaitReply: true,
@@ -304,7 +309,7 @@ describe("team scheduler", () => {
     const pmTurn = store.claimTurn(pm);
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: "产品",
+      to: pm.id,
       kind: "question",
       content: "顺便确认一下配色",
     });
@@ -328,7 +333,7 @@ describe("team scheduler", () => {
             return { ok: true };
           }
           if (!store.memberByName("产品")) {
-            store.createMember({
+            const pm = store.createMember({
               bySessionId: member.sessionId,
               name: "产品",
               role: "pm",
@@ -336,7 +341,7 @@ describe("team scheduler", () => {
             });
             store.send({
               fromSessionId: member.sessionId,
-              to: "产品",
+              to: pm.id,
               kind: "task",
               content: "写 plan.md",
               awaitReply: true,
@@ -380,7 +385,7 @@ describe("team scheduler", () => {
             return { ok: true };
           }
           if (!store.memberByName("产品")) {
-            store.createMember({
+            const pm = store.createMember({
               bySessionId: member.sessionId,
               name: "产品",
               role: "pm",
@@ -388,7 +393,7 @@ describe("team scheduler", () => {
             });
             store.send({
               fromSessionId: member.sessionId,
-              to: "产品",
+              to: pm.id,
               kind: "task",
               content: "写 plan.md",
               awaitReply: true,
@@ -483,7 +488,7 @@ describe("team scheduler", () => {
 
     store.send({
       fromSessionId: lead.sessionId,
-      to: "后端",
+      to: be.id,
       kind: "task",
       content: "实现 toCsv",
     });
@@ -491,7 +496,7 @@ describe("team scheduler", () => {
 
     store.send({
       fromSessionId: lead.sessionId,
-      to: "后端",
+      to: be.id,
       kind: "reject",
       content: "缺 UTF-8 BOM，退回",
     });
@@ -503,7 +508,7 @@ describe("team scheduler", () => {
     expect(() =>
       store.send({
         fromSessionId: lead.sessionId,
-        to: "后端",
+        to: be.id,
         kind: "reject",
         content: "还是不行",
       }),

@@ -52,7 +52,7 @@ describe("task scope isolation", () => {
     });
     store.send({
       fromSessionId: supervisor.sessionId,
-      to: member.name,
+      to: member.id,
       kind: "task",
       content: "任务 A",
     });
@@ -72,12 +72,25 @@ describe("task scope isolation", () => {
     expect(recovered).toBe(1);
     expect(store.pendingFresh(member.id)).toBe(true);
     // 系统不再从提交正文里截取记忆；这条结果没有经过 SaveMemory。
-    expect(readMemberMemory(memoryDir, "前端").text).toBe("");
+    expect(readMemberMemory(memoryDir, member.id).text).toBe("");
   });
 
   it("任务 A 完成后追问保留上下文，任务 B 开始前 freshContext 才为 true", async () => {
     const { store, memoryDir } = newStore();
-    appendSavedMemory(memoryDir, "前端", {
+    // 记忆按成员 id 落盘，所以先建出成员，再拿它的 id 作为键。
+    const supervisor = store.createSupervisor({
+      name: "主管",
+      role: "supervisor",
+      purpose: "接需求",
+    });
+    const feMember = store.createMember({
+      bySessionId: supervisor.sessionId,
+      name: "前端",
+      role: "fe",
+      purpose: "实现",
+      module: "src/**",
+    });
+    appendSavedMemory(memoryDir, feMember, {
       kind: "knowledge",
       content: "接口约定：a.ts 的 run() 返回 Promise。",
     });
@@ -100,7 +113,7 @@ describe("task scope isolation", () => {
             });
             store.send({
               fromSessionId: member.sessionId,
-              to: created.name,
+              to: created.id,
               kind: "task",
               content: "任务 A",
             });
@@ -112,7 +125,7 @@ describe("task scope isolation", () => {
           if (taskA === undefined) {
             store.send({
               fromSessionId: member.sessionId,
-              to: fe.name,
+              to: fe.id,
               kind: "task",
               content: "任务 A",
             });
@@ -122,14 +135,14 @@ describe("task scope isolation", () => {
             asked = true;
             store.send({
               fromSessionId: member.sessionId,
-              to: fe.name,
+              to: fe.id,
               kind: "question",
               content: "问一下进度",
             });
           } else if (taskB === undefined) {
             store.send({
               fromSessionId: member.sessionId,
-              to: fe.name,
+              to: fe.id,
               kind: "task",
               content: "任务 B",
             });
@@ -147,8 +160,8 @@ describe("task scope isolation", () => {
             .tasks()
             .find((task) => task.ownerId === member.id && task.state === "open");
           if (open !== undefined) {
-            // 模拟 agent 在提交前调用 SaveMemory：只有这里会写记忆。
-            appendSavedMemory(memoryDir, member.name, {
+            // 模拟 agent 在提交前调用 SaveMemory：只有这里会写记忆，键是成员 id。
+            appendSavedMemory(memoryDir, member, {
               kind: "task",
               content: `完成了 ${open.title}`,
             });
@@ -161,7 +174,7 @@ describe("task scope isolation", () => {
           } else if (prompt.includes("问一下进度")) {
             store.send({
               fromSessionId: member.sessionId,
-              to: "主管",
+              to: store.memberByRole("supervisor")!.id,
               kind: "answer",
               content: "进度正常",
             });
@@ -200,7 +213,7 @@ describe("task scope isolation", () => {
     // 任务 A 提交时由脚本化 agent 自己保存，下一次叫醒（追问轮）就能看到。
     expect(backgrounds[1]).toContain("完成了 任务 A");
     // 系统没有从 SubmitTask 正文里截取“记忆要点”。
-    const memory = readMemberMemory(memoryDir, "前端").text;
+    const memory = readMemberMemory(memoryDir, feMember.id).text;
     expect(memory).toContain("接口约定：a.ts");
     expect(memory).toContain("完成了 任务 A");
     expect(memory).not.toContain("这段正文不再被系统写入记忆");

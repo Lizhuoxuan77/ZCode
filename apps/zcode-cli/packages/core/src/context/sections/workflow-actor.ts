@@ -60,6 +60,7 @@ function buildTeamContract(): string {
     "# Working as a team member",
     `- ${TEAM_TOOL_SURFACE}`,
     "- Work arrives as messages. Your plain text is not delivered to teammates; send work, questions and results with `MessageTeammate`.",
+    "- Address teammates by the member id shown in your roster (`id:…`), not by name. Names are display labels and are not resolved as recipients.",
     "- When you send a message, end your turn. You are woken when a reply arrives; do not wait, poll, or loop.",
     "- Your work is not done until you call `SubmitTask` with what you produced and how you verified it.",
     // 任务级上下文隔离：提交后这段对话不会进入下一个任务，只有 agent 自己保存的记忆会。

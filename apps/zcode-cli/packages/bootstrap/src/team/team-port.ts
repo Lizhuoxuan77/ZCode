@@ -34,7 +34,7 @@ import {
 import type { TeamStoragePaths } from "@zcode/shared/node";
 import type { ScriptWorkflowAgentRuntimeDeps } from "../app/script-workflow-child-runtime.js";
 import { loadTeamConfig, type TeamConfig } from "./team-config.js";
-import { appendSavedMemory } from "./team-memory.js";
+import { appendSavedMemory, migrateMemberMemoryFiles } from "./team-memory.js";
 import { createAgentRuntimeTeamRunner, type AgentRuntimeTeamRunner } from "./team-runtime.js";
 import { TeamService } from "./team-service.js";
 import { migrateLegacyTeamStorage } from "./team-storage.js";
@@ -153,7 +153,8 @@ export function createTeamPort(input: {
     },
 
     createMember(memberInput: TeamCreateMemberRequest): TeamMemberRef {
-      const ref = requireStore().createMember(memberInput);
+      const store = requireStore();
+      const ref = store.createMember(memberInput);
       // 招进来立刻把会话落库（不跑任何一轮）：成员在第一次被叫醒前也必须有页面可点，
       // 否则组建期点新成员 = "Session not found"。落库失败不阻断招人——第一次被叫醒时还会再落。
       try {
@@ -162,14 +163,18 @@ export function createTeamPort(input: {
           logger: input.logger,
           traceContext: input.traceContext,
         });
-        void runner.prepare(ref).catch((error: unknown) => {
-          input.logger.warn(`Team member session prepare failed: ${ref.name}`, {
-            event: "team.member.prepare_failed",
-            module: "bootstrap.team",
-            member: ref.name,
-            error: error instanceof Error ? error.message : String(error),
+        // 目标与名册写进 system prompt：招人这一刻的编制就是这个人设的一部分，
+        // 之后每轮由 runner 与上一轮快照比对，变了才刷新。
+        void runner
+          .prepare(ref, { goal: store.getMeta("goal") ?? "", members: store.members() })
+          .catch((error: unknown) => {
+            input.logger.warn(`Team member session prepare failed: ${ref.name}`, {
+              event: "team.member.prepare_failed",
+              module: "bootstrap.team",
+              member: ref.name,
+              error: error instanceof Error ? error.message : String(error),
+            });
           });
-        });
       } catch (error) {
         input.logger.warn(`Team member prepare skipped: ${ref.name}`, {
           event: "team.member.prepare_skipped",
@@ -194,13 +199,14 @@ export function createTeamPort(input: {
     },
 
     saveMemory(memoryInput: TeamSaveMemoryRequest): void {
-      // 身份只来自调用会话：模型不能传名字给别人的记忆写东西。
+      // 身份只来自调用会话：模型不能传名字或 id 给别人的记忆写东西。
       const member = requireStore().member(memoryInput.fromSessionId);
       if (!member) {
         throw new TeamFlowError("当前会话不是团队成员，不能保存记忆。");
       }
       try {
-        appendSavedMemory(input.storage.memoryDir, member.name, {
+        // 落盘按成员 id，不按名字：名字是展示标签，不是身份。
+        appendSavedMemory(input.storage.memoryDir, member, {
           kind: memoryInput.kind,
           content: memoryInput.content,
         });
@@ -245,10 +251,28 @@ export function createTeamPort(input: {
     store ??= (() => {
       // SQLite 不会替我们建目录；团队目录不存在时先建，首次开库才成功。
       mkdirSync(input.storage.root, { recursive: true });
-      return new TeamStore({
+      const created = new TeamStore({
         file: input.storage.databasePath,
         limits: current.limits,
       });
+      // 升级前的记忆文件按名字命名；开库这一刻知道全部成员 id，一次性迁到 id 文件名。
+      // 幂等：目标已存在就跳过，失败保留旧文件等下次启动重试。
+      const migration = migrateMemberMemoryFiles(input.storage.memoryDir, created.members());
+      if (migration.migrated > 0) {
+        input.logger.info("Team member memory migrated to member ids", {
+          event: "team.memory.migrated",
+          module: "bootstrap.team",
+          migrated: migration.migrated,
+        });
+      }
+      if (migration.legacyKept > 0) {
+        input.logger.warn("Team memory migration kept legacy files", {
+          event: "team.memory.migration_incomplete",
+          module: "bootstrap.team",
+          legacyKept: migration.legacyKept,
+        });
+      }
+      return created;
     })();
     return store;
   }

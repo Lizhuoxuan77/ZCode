@@ -97,9 +97,12 @@ describe("TeamPort.saveMemory", () => {
       content: "接口约定：a.ts 的 run() 返回 Promise。",
     });
 
-    const snapshot = readMemberMemory(storage.memoryDir, "组长");
+    const snapshot = readMemberMemory(storage.memoryDir, member.id);
+    expect(snapshot.file.endsWith(`${member.id}.md`)).toBe(true);
     expect(snapshot.text).toContain("## 模块知识");
     expect(snapshot.text).toContain("接口约定：a.ts 的 run() 返回 Promise。");
+    // 名字只用于展示，不作为文件键。
+    expect(readMemberMemory(storage.memoryDir, member.name).text).toBe("");
     expect(port.member(member.sessionId)?.name).toBe("组长");
 
     return port.dispose();

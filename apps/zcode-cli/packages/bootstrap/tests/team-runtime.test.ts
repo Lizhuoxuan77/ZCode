@@ -1,6 +1,7 @@
-// 成员模块/职责在创建后仍可能被 updateMember 修改。运行时必须在下一轮开始前重算 persona，
-// 只刷新 system prompt，不能重建 runtime（重建会丢进程内 messageHistory）。
-// 这里用假 runtime 验证接线：创建时写 team 契约与模块，模块变更后调用 updateWorkflowActor。
+// 成员模块/职责在创建后仍可能被 updateMember 修改；团队目标与名册也会随交付和招人变化。
+// 运行时必须在下一轮开始前重算 persona，只刷新 system prompt，不能重建 runtime
+// （重建会丢进程内 messageHistory）。这里用假 runtime 验证接线：
+// 创建时写 team 契约、模块与团队背景，背景变化后调用 updateWorkflowActor。
 
 import {
   createRootTraceContext,
@@ -121,6 +122,46 @@ describe("team member runtime persona", () => {
     expect(runtime.updateWorkflowActor).toHaveBeenCalledTimes(1);
     // 没有 freshContext 的普通轮次不得清上下文。
     expect(runtime.resetConversationToContextPrefix).not.toHaveBeenCalled();
+
+    await runner.dispose();
+  });
+
+  it("把团队目标与名册写进 system prompt，背景变了的下一轮才刷新", async () => {
+    const runtime = fakeRuntime();
+    mocks.createRuntime.mockReturnValue(runtime);
+    const runner = createRunner();
+    const personaContext = { goal: "做独立预览窗口", members: [MEMBER] };
+
+    await runner.prepare(MEMBER, personaContext);
+    const config = mocks.createRuntime.mock.calls[0]?.[0] as {
+      configOverrides: { workflowActor: { persona: string } };
+    };
+    expect(config.configOverrides.workflowActor.persona).toContain("团队目标：做独立预览窗口");
+    expect(config.configOverrides.workflowActor.persona).toContain(
+      "团队成员（",
+    );
+
+    // 同一份背景不重复刷新：system prompt 前缀保持稳定。
+    await runner.run({
+      member: MEMBER,
+      prompt: "继续",
+      personaContext,
+      signal: new AbortController().signal,
+    });
+    expect(runtime.updateWorkflowActor).not.toHaveBeenCalled();
+
+    // 目标变了：下一轮开始前只刷新身份段，不重建 runtime。
+    await runner.run({
+      member: MEMBER,
+      prompt: "继续",
+      personaContext: { ...personaContext, goal: "改成可停靠的独立窗口" },
+      signal: new AbortController().signal,
+    });
+    expect(runtime.updateWorkflowActor).toHaveBeenCalledTimes(1);
+    expect(runtime.updateWorkflowActor.mock.calls[0]?.[0].persona).toContain(
+      "团队目标：改成可停靠的独立窗口",
+    );
+    expect(mocks.createRuntime).toHaveBeenCalledTimes(1);
 
     await runner.dispose();
   });

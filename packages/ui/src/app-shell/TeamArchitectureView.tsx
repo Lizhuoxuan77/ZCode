@@ -515,7 +515,7 @@ function MemberDetail({
           key={`${member.id}-memory`}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
-          memberName={member.name}
+          memberId={member.id}
         />
       </div>
     </div>
@@ -523,17 +523,17 @@ function MemberDetail({
 }
 
 /**
- * 记忆的真身是 ZCode 用户数据目录里 `teams/<slug>-<hash>/memory/<名字>.md`。
+ * 记忆的真身是 ZCode 用户数据目录里 `teams/<slug>-<hash>/memory/<成员id>.md`。
  * 选中时读一次，之后 5 秒刷一次：团队正在跑的时候，用户要能看到「它把我说的记下来了」。
  */
 function MemberMemory({
   workspacePath,
   workspaceIdentity,
-  memberName,
+  memberId,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
-  memberName: string;
+  memberId: string;
 }) {
   const { zcodeAgentService } = useServices();
   const [memory, setMemory] = useState<ZCodeTeamMemberMemoryResult | undefined>(undefined);
@@ -544,7 +544,7 @@ function MemberMemory({
       const next = await zcodeAgentService.getTeamMemberMemory({
         workspacePath,
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
-        memberName,
+        memberId,
       });
       setMemory(next);
     } catch {
@@ -552,7 +552,7 @@ function MemberMemory({
     } finally {
       setLoading(false);
     }
-  }, [memberName, workspaceIdentity, workspacePath, zcodeAgentService]);
+  }, [memberId, workspaceIdentity, workspacePath, zcodeAgentService]);
 
   useEffect(() => {
     let alive = true;

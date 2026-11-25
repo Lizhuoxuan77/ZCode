@@ -44,9 +44,11 @@ describe("desktop team storage", () => {
     expect(snapshot.started).toBe(false);
     expect(snapshot.teamName).toBe("桌面团队");
 
-    const memory = readTeamMemberMemory({ workspacePath: workspace, memberName: "组长" });
+    const memory = readTeamMemberMemory({ workspacePath: workspace, memberId: "tm_member_test" });
     expect(memory.exists).toBe(false);
     expect(memory.path.startsWith(join(dataBase, ".zcode", "cli", "teams"))).toBe(true);
+    // 文件名取成员 id，不取名字：面板显示名与存储键解耦。
+    expect(memory.path.endsWith("tm_member_test.md")).toBe(true);
   });
 
   it("远程工作区拒绝创建，快照保持空态", () => {

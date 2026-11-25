@@ -12,6 +12,7 @@
 
 - 团队属于 **workspace**，不属于 session。同一 workspace 的多个窗口共享同一批 agent；切换 workspace 即切换团队。团队配置、运行库与成员记忆属于本机运行数据，写在 ZCode 用户数据目录，不写进用户项目。
 - **agent 是身份，任务才是会结束的东西。** agent 状态只有 `idle / running / waiting / archived`，没有 `done`。交付完活的成员仍然可以被同事提问。
+- **成员 id 是唯一身份，名字只用于展示。** 发消息、任务归属、等待租约、记忆文件都按 `team_member.id` 读写；名字可以改、可以重名清洗后冲突，但不参与任何寻址。模型在名册里看到「名字（id）」，发消息时收件人写 id。
 - 交付链路固定为：用户 → 主管 → PM → UI → 组长 → 成员，成员之间并行；任何成员都可以跨层向任何人发消息提问，但**升级路径唯一**。
 - **团队交付期间不向用户提问。** v0.6 起 `ask_user` 不暴露给任何团队成员；主管拿不准时做合理假设，并在最终交付里显式标注哪些决定是替用户做的。其他角色卡住时只能发消息给上级，由上级决定是否调整范围或换做法。
 - 下游对上游产出有**一次退回权**。任务被打回后 `revision` 记 1，再次退回必须升级给主管，不允许无限互退。
@@ -95,12 +96,12 @@ sequenceDiagram
 
 ## Tools exposed to agents
 
-| 工具                                             | 谁能用                       | 语义                                                  |
-| ------------------------------------------------ | ---------------------------- | ----------------------------------------------------- |
-| `create_agent(role, persona)`                    | 主管 / PM / 组长             | 受 `depth`、`children_limit`、`tokens_limit` 三重约束 |
-| `send_message(to, kind, content, refs?, await?)` | 所有 agent                   | `kind` 决定语义；`refs` 传引用而非复述                |
-| `ask_user(question, context)`                    | **不暴露给团队成员（v0.6）** | 交付期间没有人在看会话；主管做假设并在最终交付里列出  |
-| `finish(summary, refs)`                          | 所有 agent                   | 结束自己的 task，人仍留在 `idle`                      |
+| 工具                                                     | 谁能用                       | 语义                                                              |
+| -------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------- |
+| `create_agent(role, persona)`                            | 主管 / PM / 组长             | 受 `depth`、`children_limit`、`tokens_limit` 三重约束             |
+| `send_message(toMemberId, kind, content, refs?, await?)` | 所有 agent                   | 收件人写成员 id，不写名字；`kind` 决定语义；`refs` 传引用而非复述 |
+| `ask_user(question, context)`                            | **不暴露给团队成员（v0.6）** | 交付期间没有人在看会话；主管做假设并在最终交付里列出              |
+| `finish(summary, refs)`                                  | 所有 agent                   | 结束自己的 task，人仍留在 `idle`                                  |
 
 消息必须能挂引用（文件路径、task id、上一条消息 id、artifact）。只传自然语言会让下游丢失上下文，这是这类系统最常见的失效点。
 
@@ -147,6 +148,8 @@ sequenceDiagram
 14. 一轮长时间没有输出被判卡住：该成员置 `failed`、上级收到 `[卡住]`，且不会被自动重排；上级重新派活后恢复可跑。
 15. 一直在输出（流式吐字 / 工具调用）的轮次即使总时长超过看门狗阈值也不被判卡住。
 16. 主管和产品经理持续有未读消息时，后入职的干活成员仍能在前两人结束一轮后获得执行机会；选人按最早未读消息时间排序，而不是按成员入职时间排序。
+17. 成员 id 是唯一寻址键：`MessageTeammate` 只接受名册里的 id，传名字返回业务失败并列出可用「名字（id）」；任务归属、等待租约与记忆文件都按 id 落库/落盘。
+18. 两个名字清洗后相同（如 `a b` 与 `a_b`）的成员不会共用记忆文件；旧版按名字命名的记忆在库第一次打开时迁移到 id 文件，迁移失败保留原件、下次重试。
 
 ## Open questions
 
@@ -160,7 +163,7 @@ sequenceDiagram
 
 - **用户数据目录里的 `team.json` 是唯一开关**。文件不存在时：团队工具不会真正接活、SQLite 一个都不建，老用户感觉不到任何变化。
 - 主会话只多一个 `StartTeam`；团队成员会话才有 `CreateTeammate` / `MessageTeammate` / `SubmitTask` / `SaveMemory` / `DeliverResult`。身份由 `member(sessionId)` 决定，模型无法伪造。
-- 团队按 workspace 归属，但存储在本机用户数据目录：`<cliStorageRoot>/teams/<slug>-<hash>/` 下分别是 `team.json`、`team.db` 与 `memory/<成员名>.md`。目录名里的 hash 取 `workspaceIdentity?.trim() || 规范化后的工作区路径`（Windows 转小写），桌面端用 `<应用数据根>/.zcode/cli` 作为存储根，保证两边算到同一目录。切 workspace 等于换团队，项目仓库里不会出现团队文件。
+- 团队按 workspace 归属，但存储在本机用户数据目录：`<cliStorageRoot>/teams/<slug>-<hash>/` 下分别是 `team.json`、`team.db` 与 `memory/<成员id>.md`。目录名里的 hash 取 `workspaceIdentity?.trim() || 规范化后的工作区路径`（Windows 转小写），桌面端用 `<应用数据根>/.zcode/cli` 作为存储根，保证两边算到同一目录。切 workspace 等于换团队，项目仓库里不会出现团队文件。
 - **旧数据一次性迁移**：agent 启动时若发现项目里还有旧版 `.zcode/team.json`，会把配置、数据库（含 WAL/shm）与记忆复制到用户目录，成功后再删除旧文件；复制失败则保留旧文件、下次启动重试。新位置已经建过团队时不再并入旧数据。
 - **远程工作区暂不支持团队**：桌面端会明确拒绝创建，避免“本地创建成功、远端 agent 看不见”的假成功。
 
@@ -319,19 +322,23 @@ sequenceDiagram
 
 ### 提示词分层
 
-成员创建时（`team-runtime` 用 `workflowActor.persona` 建 runtime）把身份、岗位、职责、模块边界、会话记忆声明写进 system prompt；团队契约（同属 system prompt）说明记忆只属于自己、每次叫醒以背景资料出现、用 `SaveMemory` 保存要点。工具是 `CreateTeammate` / `MessageTeammate` / `SubmitTask` / `DeliverResult` / `SaveMemory`，没有 `submit_result` / `escalate`，也没有问用户的工具。每次唤醒的用户提示只放本轮动态上下文：团队目标、成员名册、权限、未完成任务、收件箱、组建/交付模式；不再重复已经固化的人设，也不携带成员记忆正文或记忆文件路径。
+成员创建时（`team-runtime` 用 `workflowActor.persona` 建 runtime）把身份、岗位、职责、模块边界、会话记忆声明写进 system prompt；团队契约（同属 system prompt）说明记忆只属于自己、每次叫醒以背景资料出现、用 `SaveMemory` 保存要点。工具是 `CreateTeammate` / `MessageTeammate` / `SubmitTask` / `DeliverResult` / `SaveMemory`，没有 `submit_result` / `escalate`，也没有问用户的工具。
 
-模块与目标的变化处理：
+**固定内容一律进 system prompt，每轮 query 只放这一轮要做的事。** 除身份外，以下内容也写进 persona：团队目标、成员名册（名字（id）、岗位、模块）、权限矩阵、工作方式（交付期）或组建期指引（组建期）。每次唤醒的用户提示只保留未完成任务、收件箱消息与上一轮失败说明；不再重复目标、名册、权限与工作规则，也不携带成员记忆正文或记忆文件路径。
+
+模块、目标与名册的变化处理：
 
 - 模块：`updateMember` 改了 `module` 或 `purpose` 后，`team-runtime` 在下一轮开始前用同一份人设函数重算 persona，并只刷新 system prompt，不重建 runtime（重建会丢进程内 `messageHistory`）。
-- 团队目标：每次交付由 `startRequirement` / `beginStaffing` 重写，不能写进创建时的 persona，留在每轮提示。
+- 团队目标与名册：每次交付由 `startRequirement` / `beginStaffing` 重写目标，招人、改名或改模块会改变名册。调度器在每轮开始前把目标、名册与组建期标记交给 `team-runtime`，由它重算 persona 并与上一轮快照比对；**只有文本真的变了**才调用 `updateWorkflowActor` 刷新 system prompt。
+- 名册只写名字、岗位与模块，**不写实时状态**（idle / running / waiting）。状态每轮都会变，写进 system prompt 会让缓存前缀每轮失效；而成员收到消息后的行为并不依赖同事此刻是否在跑。
 
 ### 独立记忆
 
 成员记忆是成员自己的长期事实，不是本轮任务的一部分。读写分开：
 
 - **唯一写入路径**：成员调用 `SaveMemory({ kind: "task" | "knowledge", content })`。`TeamPort.saveMemory` 用调用会话解析成员身份（模型不能指定别人的名字），把 agent 自己总结的 3–5 条要点追加到文件；系统不再从 `SubmitTask.result` 里截取「记忆要点」，也不再自动写「经历」行。
-- **存储**：每个成员一份 `<用户数据目录>/teams/<slug>-<hash>/memory/<名字>.md`；`## 任务记忆` 与 `## 模块知识` 两段，行格式保持 `- [MM-DD HH:MM] ...`，架构图记忆面板继续按这个格式展示。
+- **存储**：每个成员一份 `<用户数据目录>/teams/<slug>-<hash>/memory/<成员id>.md`，文件名只取 `team_member.id`（如 `tm_member_ab12…`），不取名字。`## 任务记忆` 与 `## 模块知识` 两段，行格式保持 `- [MM-DD HH:MM] ...`，架构图记忆面板继续按这个格式展示。文件标题里保留成员名字，只是给人读的标题。
+- **旧文件迁移**：升级前按名字命名的 `memory/<名字>.md` 在团队库第一次打开时一次性复制到 `<成员id>.md`。目标已存在时不覆盖（新格式优先）；复制失败保留原文件，下次启动重试；所有成员都迁移成功后删除旧名字文件。名字清洗后恰好撞到另一个成员的文件时，各成员按 id 各得一份，不共享。
 - **读取与注入**：调度器在每轮叫醒前读取文件，去掉标题和模板说明，保留正文尾部（上限 4000 字），通过 `TeamTurnRunner` 交给成员 runtime；runtime 把它作为 `team_memory` 的 system-reminder 背景上下文注入模型请求，不进入用户 query、不落 session store、不在成员会话里显示成用户消息。
 - 背景资料明确标注「过去的事实，可能已过期，执行前先核对工作区现状」；需要更早的记录可以按给出的绝对路径用 `Read` 查看，写新记忆只能用 `SaveMemory`。
 - 成员之间不读对方的记忆：共享的是任务板与邮箱，不是脑子。
@@ -340,7 +347,7 @@ sequenceDiagram
 
 ```
 写：
-  Agent ──SaveMemory──▶ TeamPort.saveMemory ──▶ appendSavedMemory ──▶ memory/<成员>.md
+  Agent ──SaveMemory──▶ TeamPort.saveMemory ──▶ appendSavedMemory ──▶ memory/<成员id>.md
   （唯一写入路径；调度器不再写）
 
 读：
@@ -444,9 +451,9 @@ WAL/shm、记忆）迁移到用户目录后旧文件被清理；重复迁移幂�
 
 1. **身份**：头像、名字、角色、状态词（执行中带时长）、模块、职责、会话入口「打开它的会话」；
 2. **在手任务**：该成员名下未完成任务（含退回次数），点开看完整指令；
-3. **记忆**：用户数据目录里 `teams/<slug>-<hash>/memory/<名字>.md` 的尾部时间线 + 模块笔记。
+3. **记忆**：用户数据目录里 `teams/<slug>-<hash>/memory/<成员id>.md` 的尾部时间线 + 模块笔记。
 
-记忆的读取是一条**按需**通路，不塞进快照：`getTeamMemberMemory({ workspacePath, memberName })`
+记忆的读取是一条**按需**通路，不塞进快照：`getTeamMemberMemory({ workspacePath, memberId })`
 只读该文件尾部 16k 字符，返回 `text / chars / truncated / updatedAt / path`。
 理由：快照每 2s 拉一次，而记忆文件随轮次增长；把它塞进快照会让每次轮询都读 N 份文件。
 选中成员时读一次，之后 5s 刷新一次，足以看到「我刚让它做的事它记下来了」。
