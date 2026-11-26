@@ -152,6 +152,9 @@ export {
 // 把 readTeamSnapshot 这种运行时函数导出出去，会把 node:sqlite 拖进浏览器图表，
 // 启动即白屏。需要函数的地方直接从 ./zcode-agent/teamSnapshot.js 引。
 export type {
+  TeamConfigPatch,
+  ZCodeTeamConfigResult,
+  ZCodeTeamConfigTarget,
   ZCodeTeamConfigWriteParams,
   ZCodeTeamConfigWriteResult,
 } from "./zcode-agent/teamConfigWrite.js";

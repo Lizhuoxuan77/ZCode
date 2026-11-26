@@ -55,4 +55,24 @@ describe("team config", () => {
     );
     expect(loadTeamConfig(withConfig({ turnTimeoutMs: -1 }))?.turnTimeoutMs).toBe(30 * 60_000);
   });
+
+  it("并发数与人数上限走同一份默认值与校验", () => {
+    const defaults = loadTeamConfig(withConfig({ name: "t" }));
+    expect(defaults?.concurrency).toBe(2);
+    expect(defaults?.limits.maxMembers).toBe(8);
+    expect(defaults?.limits.maxDepth).toBe(3);
+    expect(defaults?.limits.maxRevisions).toBe(1);
+    expect(defaults?.limits.maxQuestionHops).toBe(3);
+
+    const custom = loadTeamConfig(
+      withConfig({ concurrency: 4, limits: { maxMembers: 6, maxRevisions: 0 } }),
+    );
+    expect(custom?.concurrency).toBe(4);
+    expect(custom?.limits.maxMembers).toBe(6);
+    expect(custom?.limits.maxRevisions).toBe(0); // 0 合法，退回重做可关闭
+    expect(custom?.limits.maxDepth).toBe(3); // 未给的字段回退默认
+
+    expect(loadTeamConfig(withConfig({ concurrency: 0 }))?.concurrency).toBe(2);
+    expect(loadTeamConfig(withConfig({ limits: { maxMembers: -1 } }))?.limits.maxMembers).toBe(8);
+  });
 });

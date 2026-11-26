@@ -1,8 +1,15 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildTeamDeliveryPrompt, buildTeamStaffingPrompt } from "@zcode/shared";
-import { UsersIcon, Waypoints } from "lucide-react";
+import {
+  buildTeamDeliveryPrompt,
+  buildTeamStaffingPrompt,
+  type TeamConfigView,
+} from "@zcode/shared";
+import { Settings2Icon, UsersIcon, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
+import { Input } from "@/components/ui/input.js";
 import { useServices } from "@/hooks/useServices.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { logger } from "@/logger.js";
 import type { TeamSidePaneTab } from "@/lib/workspaceSidePane.js";
 import {
   TEAM_ROLE_INITIAL,
@@ -32,6 +39,89 @@ const PHASES: Array<{ key: string; label: string }> = [
 
 const ROLE_CHIP = TEAM_ROLE_LABEL;
 const ROLE_INITIAL = TEAM_ROLE_INITIAL;
+
+/**
+ * 配置表单字段。每个字段声明：i18n 标签/提示、从 TeamConfigView 取值、是否以分钟展示（ms ↔ min）。
+ * 时间与并发共用一套正整数校验，0 只在 maxDuration/stall 合法（不限 / 关闭看门狗）。
+ */
+type ConfigKey =
+  | "concurrency"
+  | "maxMembers"
+  | "maxDepth"
+  | "maxRevisions"
+  | "maxQuestionHops"
+  | "maxDurationMs"
+  | "turnTimeoutMs"
+  | "stallTimeoutMs";
+
+interface ConfigField {
+  key: ConfigKey;
+  labelId: string;
+  hintId?: string;
+  /** true 表示配置里存毫秒，表单显示分钟。 */
+  minutes?: boolean;
+  /** 是否允许 0（不限 / 关闭）。 */
+  allowZero?: boolean;
+  get: (config: TeamConfigView) => number;
+}
+
+const CONFIG_FIELDS: ConfigField[] = [
+  {
+    key: "concurrency",
+    labelId: "team.config.concurrency",
+    hintId: "team.config.concurrencyHint",
+    get: (c) => c.concurrency,
+  },
+  {
+    key: "maxMembers",
+    labelId: "team.config.maxMembers",
+    hintId: "team.config.maxMembersHint",
+    get: (c) => c.limits.maxMembers,
+  },
+  {
+    key: "maxDepth",
+    labelId: "team.config.maxDepth",
+    get: (c) => c.limits.maxDepth,
+  },
+  {
+    key: "maxRevisions",
+    labelId: "team.config.maxRevisions",
+    get: (c) => c.limits.maxRevisions,
+    allowZero: true,
+  },
+  {
+    key: "maxQuestionHops",
+    labelId: "team.config.maxQuestionHops",
+    get: (c) => c.limits.maxQuestionHops,
+  },
+  {
+    key: "maxDurationMs",
+    labelId: "team.config.maxDurationMin",
+    hintId: "team.config.maxDurationHint",
+    minutes: true,
+    allowZero: true,
+    get: (c) => c.maxDurationMs,
+  },
+  {
+    key: "turnTimeoutMs",
+    labelId: "team.config.turnTimeoutMin",
+    minutes: true,
+    get: (c) => c.turnTimeoutMs,
+  },
+  {
+    key: "stallTimeoutMs",
+    labelId: "team.config.stallTimeoutMin",
+    hintId: "team.config.stallTimeoutHint",
+    minutes: true,
+    allowZero: true,
+    get: (c) => c.stallTimeoutMs,
+  },
+];
+
+function fieldToInput(field: ConfigField, config: TeamConfigView): string {
+  const value = field.get(config);
+  return String(field.minutes ? Math.round(value / 60_000) : value);
+}
 
 const AVATAR_CLASS: Record<string, string> = {
   supervisor: "bg-violet-500/15 text-violet-300 border-violet-500/40",
@@ -79,6 +169,7 @@ export function TeamSidePane({
   onOpenArchitecture?: () => void;
 }) {
   const { zcodeAgentService } = useServices();
+  const { intl } = useZCodeIntl();
   const { snapshot, error, now, reload: load } = useTeamSnapshot(tab.workspacePath, {
     workspaceIdentity: tab.workspaceIdentity,
   });
@@ -88,6 +179,14 @@ export function TeamSidePane({
   const [actionError, setActionError] = useState<string | undefined>(undefined);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configError, setConfigError] = useState<string | undefined>(undefined);
+  const [configSaved, setConfigSaved] = useState(false);
+  // 表单用的配置值：优先主动从服务读取，不依赖快照一定带上 config（旧 Host 可能没有）。
+  const [configValue, setConfigValue] = useState<TeamConfigView | undefined>(undefined);
+  // 表单用字符串保存输入，允许中间态（空、非数字）；保存时再校验。
+  const [configDraft, setConfigDraft] = useState<Record<string, string>>({ });
 
   const createTeam = useCallback(async () => {
     const name = teamName.trim() || "交付小队";
@@ -107,6 +206,91 @@ export function TeamSidePane({
       setBusy(false);
     }
   }, [busy, load, tab.workspaceIdentity, tab.workspacePath, teamName, zcodeAgentService]);
+
+  const openConfig = useCallback(async () => {
+    // 点开就收起：已展开时再点直接关掉，不必重读。
+    if (configOpen) {
+      setConfigOpen(false);
+      return;
+    }
+    // 不再静默依赖 snapshot.config：主动读一次，兼容快照尚未带上 config 的情况（旧 Host）。
+    setConfigError(undefined);
+    setConfigSaved(false);
+    try {
+      const target = {
+        workspacePath: tab.workspacePath,
+        ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+      };
+      const loaded = (await zcodeAgentService.getTeamConfig(target)).config ?? snapshot?.config;
+      if (!loaded) {
+        setConfigError(intl.formatMessage({ id: "team.config.readFailed" }));
+        return;
+      }
+      setConfigValue(loaded);
+      const draft: Record<string, string> = {};
+      for (const field of CONFIG_FIELDS) draft[field.key] = fieldToInput(field, loaded);
+      setConfigDraft(draft);
+      setConfigOpen(true);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      logger.warn("[TeamSidePane] 读取团队配置失败", { message });
+      // 方法不存在（旧 Host）时给出可操作的提示，而不是静默无反应。
+      setConfigError(intl.formatMessage({ id: "team.config.readFailed" }));
+    }
+  }, [configOpen, intl, snapshot?.config, tab.workspaceIdentity, tab.workspacePath, zcodeAgentService]);
+
+  const saveConfig = useCallback(async () => {
+    if (configSaving) return;
+    setConfigError(undefined);
+    setConfigSaved(false);
+
+    // 逐字段校验：整数 + 是否允许 0；分钟字段换算回毫秒。
+    const patch: Record<string, unknown> = {};
+    const limits: Record<string, number> = {};
+    for (const field of CONFIG_FIELDS) {
+      const raw = configDraft[field.key]?.trim() ?? "";
+      if (!/^\d+$/.test(raw)) {
+        setConfigError(intl.formatMessage({ id: "team.config.invalid" }));
+        return;
+      }
+      let value = Number(raw);
+      if (!Number.isFinite(value) || (value === 0 && !field.allowZero)) {
+        setConfigError(intl.formatMessage({ id: "team.config.invalid" }));
+        return;
+      }
+      if (field.minutes) value *= 60_000;
+      if (
+        field.key === "concurrency" ||
+        field.key === "maxDurationMs" ||
+        field.key === "turnTimeoutMs" ||
+        field.key === "stallTimeoutMs"
+      ) {
+        patch[field.key] = value;
+      } else {
+        limits[field.key] = value;
+      }
+    }
+    patch.limits = limits;
+
+    setConfigSaving(true);
+    try {
+      await zcodeAgentService.updateTeamConfig(
+        {
+          workspacePath: tab.workspacePath,
+          ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+        },
+        patch,
+      );
+      await load();
+      setConfigSaved(true);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      logger.warn("[TeamSidePane] 保存团队配置失败", { message });
+      setConfigError(message);
+    } finally {
+      setConfigSaving(false);
+    }
+  }, [configDraft, configSaving, intl, load, tab.workspaceIdentity, tab.workspacePath, zcodeAgentService]);
 
   const dispatch = useCallback(() => {
     const text = requirement.trim();
@@ -312,9 +496,79 @@ export function TeamSidePane({
     </div>
   );
 
+  const configPanel = configOpen && configValue ? (
+    <div className="shrink-0 border-b border-border/60 bg-muted/30 px-3 py-3">
+      <div className="text-ui-sm font-medium text-foreground">
+        {intl.formatMessage({ id: "team.config.title" })}
+      </div>
+      <div className="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+        {intl.formatMessage({ id: "team.config.hint" })}
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+        {CONFIG_FIELDS.map((field) => (
+          <label key={field.key} className="flex flex-col gap-0.5">
+            <span className="text-ui-xs text-foreground-subtle">
+              {intl.formatMessage({ id: field.labelId })}
+            </span>
+            <Input
+              type="number"
+              min={field.allowZero ? 0 : 1}
+              step={1}
+              inputMode="numeric"
+              className="h-8 text-ui-sm tabular-nums"
+              value={configDraft[field.key] ?? fieldToInput(field, configValue)}
+              onChange={(event) =>
+                setConfigDraft((draft) => ({ ...draft, [field.key]: event.target.value }))
+              }
+            />
+            {field.hintId ? (
+              <span className="text-ui-xs leading-snug text-muted-foreground/70">
+                {intl.formatMessage({ id: field.hintId })}
+              </span>
+            ) : null}
+          </label>
+        ))}
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        <Button size="sm" onClick={() => void saveConfig()} disabled={configSaving}>
+          {configSaving
+            ? intl.formatMessage({ id: "team.config.saving" })
+            : intl.formatMessage({ id: "team.config.save" })}
+        </Button>
+        {configSaved ? (
+          <span className="text-ui-xs text-success">
+            {intl.formatMessage({ id: "team.config.saved" })}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  // 错误提示独立于面板：读取配置失败时面板不渲染，但用户必须看到原因（否则又是「点没反应」）。
+  const configErrorNote = configError ? (
+    <div className="shrink-0 border-b border-border/60 bg-destructive/5 px-3 py-2 text-ui-xs leading-relaxed break-all text-destructive">
+      {configError}
+    </div>
+  ) : null;
+
   if (!snapshot.started) {
     return (
       <div className="flex h-full flex-col">
+        {configErrorNote}
+        {configPanel}
+        <div className="flex shrink-0 justify-end px-3 py-1.5">
+          <button
+            type="button"
+            onClick={() => void openConfig()}
+            title={intl.formatMessage({ id: "team.config.open" })}
+            aria-label={intl.formatMessage({ id: "team.config.openAria" })}
+            aria-expanded={configOpen}
+            data-testid="team-config-open"
+            className="grid size-6 place-items-center rounded text-foreground-subtlest hover:bg-hover hover:text-foreground-subtle"
+          >
+            <Settings2Icon className="size-3.5" />
+          </button>
+        </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <div className="flex size-11 items-center justify-center rounded-full bg-muted">
             <UsersIcon className="size-5 text-muted-foreground" aria-hidden />
@@ -350,6 +604,8 @@ export function TeamSidePane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {configErrorNote}
+      {configPanel}
       <div className="shrink-0 border-b border-border/60 px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span className="truncate text-ui-sm font-semibold text-foreground">
@@ -360,6 +616,17 @@ export function TeamSidePane({
           >
             {statusPill.text}
           </span>
+          <button
+            type="button"
+            onClick={() => void openConfig()}
+            title={intl.formatMessage({ id: "team.config.open" })}
+            aria-label={intl.formatMessage({ id: "team.config.openAria" })}
+            aria-expanded={configOpen}
+            data-testid="team-config-open"
+            className="grid size-5 shrink-0 place-items-center rounded text-foreground-subtlest hover:bg-hover hover:text-foreground-subtle"
+          >
+            <Settings2Icon className="size-3.5" />
+          </button>
           {onOpenArchitecture ? (
             <button
               type="button"

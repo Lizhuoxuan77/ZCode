@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { normalizeTeamConfig, type TeamConfigView } from "@zcode/shared";
 import { isRemoteTeamWorkspace, resolveDesktopTeamStorage } from "./teamStorage.js";
 
 export interface ZCodeTeamSnapshotParams {
@@ -70,6 +71,8 @@ export interface ZCodeTeamSnapshot {
   configured: boolean;
   /** 配置里写的团队名。界面用来标身份，缺失时退回「团队」。 */
   teamName?: string;
+  /** 当前团队配置（已归一化，含默认值）。供面板配置表单读初值。 */
+  config?: TeamConfigView;
   /** 有没有已经跑过的团队（db 存在）。 */
   started: boolean;
   goal?: string;
@@ -130,10 +133,10 @@ interface MessageRow {
  * 读一次团队状态。任何异常都降级成「空快照 + started=false」：
  * 界面在团队还没建、库正在迁移、或 agent 刚退出时都不该炸掉。
  */
-function readTeamName(configPath: string): string | undefined {
+/** 读整份团队配置；坏文件按不存在处理，团队功能不该因为一个逗号起不来。 */
+function readTeamConfig(configPath: string): TeamConfigView | undefined {
   try {
-    const raw = JSON.parse(readFileSync(configPath, "utf8")) as { name?: unknown };
-    return typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : undefined;
+    return normalizeTeamConfig(JSON.parse(readFileSync(configPath, "utf8")) as unknown);
   } catch {
     return undefined;
   }
@@ -145,9 +148,13 @@ export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnap
   const storage = resolveDesktopTeamStorage(params);
   const configPath = storage.configPath;
   const configured = existsSync(configPath);
-  const teamName = readTeamName(configPath);
+  const config = readTeamConfig(configPath);
+  const teamName = config?.name;
+  const configFields = config ? { config } : {};
   const dbPath = storage.databasePath;
-  if (!existsSync(dbPath)) return { ...EMPTY(configured), ...(teamName ? { teamName } : {}) };
+  if (!existsSync(dbPath)) {
+    return { ...EMPTY(configured), ...(teamName ? { teamName } : {}), ...configFields };
+  }
 
   const limit = Math.min(Math.max(params.messageLimit ?? 60, 1), 500);
   let db: DatabaseSync | undefined;
@@ -159,7 +166,7 @@ export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnap
       )
       .all() as unknown as MemberRow[];
     if (members.length === 0) {
-      return { ...EMPTY(configured), ...(teamName ? { teamName } : {}), readAt: Date.now() };
+      return { ...EMPTY(configured), ...(teamName ? { teamName } : {}), ...configFields, readAt: Date.now() };
     }
 
     const nameById = new Map(members.map((member) => [member.id, member.name]));
@@ -186,6 +193,7 @@ export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnap
     return {
       configured,
       ...(teamName ? { teamName } : {}),
+      ...configFields,
       started: true,
       ...(meta.get("goal") === undefined ? {} : { goal: meta.get("goal") }),
       // staffing = 主管正在看项目配人；ready = 编制已定，可以派任务。
@@ -240,7 +248,7 @@ export function readTeamSnapshot(params: ZCodeTeamSnapshotParams): ZCodeTeamSnap
       readAt: Date.now(),
     };
   } catch {
-    return EMPTY(configured);
+    return { ...EMPTY(configured), ...configFields };
   } finally {
     db?.close();
   }

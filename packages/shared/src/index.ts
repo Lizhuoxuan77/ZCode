@@ -127,6 +127,7 @@ export * from "./zcode-session-content-profile.js";
 export * from "./zcode-tool-projection-memory.js";
 export * from "./zcode-slash-command-help.js";
 export * from "./zcode-team-dispatch.js";
+export * from "./zcode-team-config.js";
 export * from "./zcodeEndpoint.js";
 export * from "./zcode-source-headers.js";
 export * from "./zcode-agent-policy.js";

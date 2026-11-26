@@ -2372,3 +2372,8 @@ exceptions:
     paths:
       - packages/ui/src/root/GlobalDatabaseStartupLoading.tsx
     reason: 启动失败页在现有复制诊断/重试/退出旁增加导出日志按钮（docs/desktop/database-migration-startup-gate-plan.md）。只扩展既有失败页交互，不新增文件、不改变启动状态 owner 或模块边界；接管 packages/ui/src/root 不在本次范围内。
+  - id: team-config-shared-schema
+    rule: unmanaged-new-file
+    paths:
+      - packages/shared/src/zcode-team-config.ts
+    reason: 团队配置面板（specs/team-agent.md「团队配置的编辑形态」）新增一份 renderer 安全的 team.json 形状/默认值/归一化纯函数，供桌面端服务层与 CLI 读取侧共用同一份回退值，杜绝读写漂移。它是纯 TS、无 IO、无新 owner；@zcode/shared 是 services 与 zcode-cli/bootstrap 共同依赖的唯一 public 包（services 不依赖 contracts），接管整个 shared 目录不在本次范围内。

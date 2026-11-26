@@ -222,7 +222,14 @@ import {
 } from "#src/zcode-agent/automationToolPolicy.js";
 import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./zcodeAgent.js";
 import { readTeamSnapshot, type ZCodeTeamSnapshotParams } from "./teamSnapshot.js";
-import { writeTeamConfig, type ZCodeTeamConfigWriteParams } from "./teamConfigWrite.js";
+import {
+  readTeamConfig,
+  updateTeamConfig,
+  writeTeamConfig,
+  type TeamConfigPatch,
+  type ZCodeTeamConfigTarget,
+  type ZCodeTeamConfigWriteParams,
+} from "./teamConfigWrite.js";
 import { readTeamMemberMemory, type ZCodeTeamMemberMemoryParams } from "./teamMemory.js";
 import { createContextCompositionClient } from "#src/zcode-agent/contextCompositionClient.js";
 import {
@@ -4920,6 +4927,14 @@ export function createZCodeAgentService(
 
     async writeTeamConfig(params: ZCodeTeamConfigWriteParams) {
       return writeTeamConfig(params);
+    },
+
+    async getTeamConfig(params: ZCodeTeamConfigTarget) {
+      return readTeamConfig(params);
+    },
+
+    async updateTeamConfig(params: ZCodeTeamConfigTarget, patch: TeamConfigPatch) {
+      return updateTeamConfig(params, patch);
     },
 
     async getTeamMemberMemory(params: ZCodeTeamMemberMemoryParams) {

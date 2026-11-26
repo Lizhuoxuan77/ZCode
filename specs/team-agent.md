@@ -74,6 +74,14 @@ sequenceDiagram
 
 团队配置写成 ZCode 用户数据目录下的一个 JSON 文件，由团队面板创建；高级用户可以直接编辑它，但项目仓库里看不到它，也不会被误提交。界面负责创建和展示，不把 prompt 文本藏进表单——成员人设由岗位与职责生成，不在配置里存整段 prompt。
 
+**面板配置入口（v0.7）**：团队已创建后，团队面板身份区提供「配置」入口，展开当前团队的配置表单。可改字段：`concurrency`（同时干活的成员数）、`limits.maxMembers`（全队人数上限，含主管）、`limits.maxDepth`（组织层级）、`limits.maxRevisions`（退回重做轮次）、`limits.maxQuestionHops`（提问跳数）、`maxDurationMs`（整次交付墙钟上限，0=不限）、`turnTimeoutMs`（单轮上限）、`stallTimeoutMs`（看门狗阈值，0=关闭）。表单只暴露结构化数值，不存 prompt 文本。
+
+- **归属**：配置按 `workspaceIdentity?.trim() || 规范化工作区路径` 分目录（`teams/<slug>-<hash>/team.json`），一个工作区一个团队，面板配置天然只作用于当前团队。
+- **唯一写入路径**：面板「创建团队」仍走 create-only 写入（不覆盖已有配置）；创建后的修改统一走服务层 `updateTeamConfig` —— 读旧配置、按字段白名单校验、原子合并写回，保留未知字段与 name/supervisor。UI 不直接碰文件。
+- **校验**：`concurrency`/`limits.maxMembers`/`limits.maxDepth`/`limits.maxQuestionHops`/`turnTimeoutMs` 必须为正整数，`maxRevisions` 为非负整数，`maxDurationMs`/`stallTimeoutMs` 为非负整数（0 合法，分别表示不限/关闭）。非法值回退到默认值，不崩会话。默认值与 CLI 读取侧共用同一份解析，避免读写漂移。
+- **生效时机**：保存即落盘；`concurrency` 与三个超时在**下一次派任务（StartTeam）**时随新配置生效，不打断正在跑的交付；`limits` 因 TeamStore 在开库时缓存，同样按"下次派任务生效"对外说明（本次不做运行中热更新）。
+- **远程工作区**：与创建一样拒绝，面板不显示配置入口，服务端写入时再次校验拒绝。
+
 理由：团队配置是“这台机器上这个项目要不要有团队”的开关，不是项目源码；把它放进仓库会泄露需求正文、成员对话与记忆，也会在同步盘上引入 SQLite 锁风险。代价是换机器或复制项目不会带走团队，这一版接受。
 
 ### 完整交互流程
@@ -173,13 +181,13 @@ sequenceDiagram
   "supervisor": { "name": "主管", "purpose": "接需求、组队、验收、向用户交付" },
   "limits": { "maxMembers": 8, "maxDepth": 3, "maxRevisions": 1, "maxQuestionHops": 3 },
   "concurrency": 2,
-  "maxDurationMs": 0,
+  "maxDurationMs": 7200000,
   "turnTimeoutMs": 1800000,
   "stallTimeoutMs": 600000
 }
 ```
 
-`maxDurationMs` 是整次交付的墙钟上限，**`0` 表示不限**；`turnTimeoutMs` 是单个成员一轮的上限；
+上面是**默认值**，与 `loadTeamConfig` 的回退值一致（`maxDurationMs` = 2 小时、`turnTimeoutMs` = 30 分钟、`stallTimeoutMs` = 10 分钟）。`maxDurationMs` 是整次交付的墙钟上限，**`0` 表示不限**；`turnTimeoutMs` 是单个成员一轮的上限；
 `stallTimeoutMs` 是看门狗阈值——一个成员连续多久**没有任何输出**算卡住，`0` 关闭看门狗。
 墙钟只用于防僵尸团队把主会话永久挂住，不是「失控」的判据——按 2 并发折算，一次完整交付光轮次就要
 75–150 分钟，30 分钟上限注定砍掉真实任务。真正的兜底是看门狗与单轮上限。

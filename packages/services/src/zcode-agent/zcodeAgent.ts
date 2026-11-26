@@ -20,6 +20,9 @@ import type {
   ZCodeTeamSnapshotParams,
 } from "#src/zcode-agent/teamSnapshot.js";
 import type {
+  TeamConfigPatch,
+  ZCodeTeamConfigResult,
+  ZCodeTeamConfigTarget,
   ZCodeTeamConfigWriteParams,
   ZCodeTeamConfigWriteResult,
 } from "#src/zcode-agent/teamConfigWrite.js";
@@ -748,6 +751,18 @@ export interface IZCodeAgentService {
    * 远程工作区不支持：团队数据只保存在本机用户目录。
    */
   writeTeamConfig(params: ZCodeTeamConfigWriteParams): Promise<ZCodeTeamConfigWriteResult>;
+  /**
+   * 面板配置入口：读当前团队配置（含归一化后的默认值）。远程工作区返回 config=undefined。
+   */
+  getTeamConfig(params: ZCodeTeamConfigTarget): Promise<ZCodeTeamConfigResult>;
+  /**
+   * 面板配置入口：按字段白名单更新当前团队配置并原子写回。
+   * 团队未创建或远程工作区时抛错；并发/超时在下次派任务生效，limits 在重开库后生效。
+   */
+  updateTeamConfig(
+    params: ZCodeTeamConfigTarget,
+    patch: TeamConfigPatch,
+  ): Promise<ZCodeTeamConfigResult>;
   /**
    * 架构图里点开一个成员时读它的记忆。按需读，不进 `getTeamSnapshot`：
    * 快照是 2s 一次的轮询，而记忆文件会随轮次增长，塞进快照等于每次轮询读 N 份文件。
